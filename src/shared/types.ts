@@ -1,5 +1,6 @@
 export type AspectHandling = "fit-blur" | "center-crop" | "letterbox";
 export type MergePhase = "idle" | "probing" | "normalizing" | "concatenating" | "complete" | "error";
+export type ProcessingMode = "auto" | "backend" | "browser";
 
 export interface VideoMetadata {
   duration: number;

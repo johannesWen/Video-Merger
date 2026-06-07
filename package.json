@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "concurrently -k -n backend,frontend -c green,cyan \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:frontend": "vite --host 0.0.0.0",
+    "dev:backend": "tsx watch src/backend/server.ts",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run"
@@ -16,15 +18,22 @@
     "@ffmpeg/core": "^0.12.10",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
+    "concurrently": "^10.0.3",
+    "express": "^5.2.1",
     "lucide-react": "^0.468.0",
+    "multer": "^2.1.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.1.0",
+    "@types/node": "^25.9.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "jsdom": "^25.0.1",
+    "tsx": "^4.22.4",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
     "vitest": "^4.1.8"

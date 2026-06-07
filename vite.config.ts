@@ -9,7 +9,10 @@ const isolationHeaders = {
 export default defineConfig({
   plugins: [react()],
   server: {
-    headers: isolationHeaders
+    headers: isolationHeaders,
+    proxy: {
+      "/api": "http://localhost:5174"
+    }
   },
   preview: {
     headers: isolationHeaders

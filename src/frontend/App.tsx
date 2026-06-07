@@ -22,11 +22,13 @@ import {
   Loader2,
   RotateCcw,
   Scissors,
+  Server,
   Trash2,
   UploadCloud,
   X
 } from "lucide-react";
 import { type ChangeEvent, type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BackendFfmpegEngine, getBackendHealth } from "../processing/BackendFfmpegEngine";
 import { BrowserFfmpegEngine } from "../processing/BrowserFfmpegEngine";
 import {
   createVideoItem,
@@ -37,7 +39,7 @@ import {
   sortByCreationDate,
   validateVideoFiles
 } from "../shared/mediaUtils";
-import type { AspectHandling, MergeProgress, OutputSettings, VideoItem } from "../shared/types";
+import type { AspectHandling, MergeProgress, OutputSettings, ProcessingMode, VideoItem } from "../shared/types";
 
 type AppStatus = "idle" | "probing" | "ready" | "merging" | "complete" | "error";
 
@@ -55,7 +57,8 @@ const aspectHandlingLabels: Record<AspectHandling, string> = {
 };
 
 export function App() {
-  const engine = useMemo(() => new BrowserFfmpegEngine(), []);
+  const browserEngine = useMemo(() => new BrowserFfmpegEngine(), []);
+  const backendEngine = useMemo(() => new BackendFfmpegEngine(), []);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const itemsRef = useRef<VideoItem[]>([]);
   const downloadUrlRef = useRef<string | null>(null);
@@ -65,6 +68,9 @@ export function App() {
   const [progress, setProgress] = useState<MergeProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [processingMode, setProcessingMode] = useState<ProcessingMode>("auto");
+  const [backendAvailable, setBackendAvailable] = useState(false);
+  const [backendMessage, setBackendMessage] = useState("Checking backend");
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -89,9 +95,36 @@ export function App() {
       if (downloadUrlRef.current) {
         URL.revokeObjectURL(downloadUrlRef.current);
       }
-      engine.cancel();
+      browserEngine.cancel();
+      backendEngine.cancel();
     };
-  }, [engine]);
+  }, [backendEngine, browserEngine]);
+
+  useEffect(() => {
+    let isCurrent = true;
+
+    getBackendHealth()
+      .then((health) => {
+        if (!isCurrent) {
+          return;
+        }
+
+        setBackendAvailable(health.ok);
+        setBackendMessage(health.ok ? "Backend FFmpeg ready" : "Install ffmpeg and ffprobe for backend mode");
+      })
+      .catch(() => {
+        if (!isCurrent) {
+          return;
+        }
+
+        setBackendAvailable(false);
+        setBackendMessage("Backend server unavailable");
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
 
   const resetDownload = useCallback(() => {
     setDownloadUrl((currentUrl) => {
@@ -129,7 +162,7 @@ export function App() {
           );
 
           try {
-            const [metadata, preview] = await Promise.all([engine.probe(item.file), engine.createPreview(item.file)]);
+            const [metadata, preview] = await Promise.all([browserEngine.probe(item.file), browserEngine.createPreview(item.file)]);
             setItems((currentItems) =>
               currentItems.map((currentItem) =>
                 currentItem.id === item.id
@@ -160,7 +193,7 @@ export function App() {
 
       setStatus((currentStatus) => (currentStatus === "probing" ? "ready" : currentStatus));
     },
-    [engine, resetDownload]
+    [browserEngine, resetDownload]
   );
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -231,7 +264,24 @@ export function App() {
     });
 
     try {
-      const blob = await engine.merge(items, settings, setProgress);
+      const selectedEngine = chooseMergeEngine({
+        browserEngine,
+        backendEngine,
+        backendAvailable,
+        items,
+        processingMode
+      });
+      const engineLabel = selectedEngine === backendEngine ? "Backend FFmpeg" : "Browser FFmpeg";
+
+      setProgress({
+        phase: "normalizing",
+        completed: 0,
+        total: items.length,
+        ratio: 0,
+        message: `Starting ${engineLabel}`
+      });
+
+      const blob = await selectedEngine.merge(items, settings, setProgress);
       setDownloadUrl(URL.createObjectURL(blob));
       setStatus("complete");
     } catch (mergeError) {
@@ -241,7 +291,8 @@ export function App() {
   };
 
   const handleCancel = () => {
-    engine.cancel();
+    browserEngine.cancel();
+    backendEngine.cancel();
     setStatus(items.length > 0 ? "ready" : "idle");
     setProgress(null);
     setError("Merge cancelled.");
@@ -260,7 +311,14 @@ export function App() {
           </div>
         </div>
 
-        <OutputControls settings={settings} onChange={setSettings} disabled={status === "merging"} />
+        <OutputControls
+          settings={settings}
+          processingMode={processingMode}
+          backendAvailable={backendAvailable}
+          onProcessingModeChange={setProcessingMode}
+          onChange={setSettings}
+          disabled={status === "merging"}
+        />
       </header>
 
       <section className="workspace">
@@ -306,6 +364,10 @@ export function App() {
               <div style={{ width: `${progress ? progress.ratio * 100 : items.length === 0 ? 0 : (readyCount / items.length) * 100}%` }} />
             </div>
             <p>{progress?.message ?? `${settings.width}x${settings.height} / ${settings.aspectLabel}`}</p>
+            <p className="backend-status">
+              <Server aria-hidden="true" size={14} />
+              {backendMessage}
+            </p>
           </div>
 
           {error && <p className="error-text">{error}</p>}
@@ -336,11 +398,17 @@ export function App() {
 
 function OutputControls({
   settings,
+  processingMode,
+  backendAvailable,
   disabled,
+  onProcessingModeChange,
   onChange
 }: {
   settings: OutputSettings;
+  processingMode: ProcessingMode;
+  backendAvailable: boolean;
   disabled: boolean;
+  onProcessingModeChange: (mode: ProcessingMode) => void;
   onChange: (settings: OutputSettings) => void;
 }) {
   const setPreset = (preset: (typeof aspectPresets)[number]) => {
@@ -408,8 +476,61 @@ function OutputControls({
           ))}
         </select>
       </label>
+
+      <div className="mode-control">
+        <span>Engine</span>
+        <div className="segmented-control" aria-label="Processing engine">
+          <button
+            type="button"
+            className={processingMode === "auto" ? "is-active" : ""}
+            disabled={disabled}
+            onClick={() => onProcessingModeChange("auto")}
+          >
+            Hybrid
+          </button>
+          <button
+            type="button"
+            className={processingMode === "backend" ? "is-active" : ""}
+            disabled={disabled || !backendAvailable}
+            onClick={() => onProcessingModeChange("backend")}
+          >
+            Backend
+          </button>
+          <button
+            type="button"
+            className={processingMode === "browser" ? "is-active" : ""}
+            disabled={disabled}
+            onClick={() => onProcessingModeChange("browser")}
+          >
+            Browser
+          </button>
+        </div>
+      </div>
     </div>
   );
+}
+
+function chooseMergeEngine({
+  browserEngine,
+  backendEngine,
+  backendAvailable,
+  items,
+  processingMode
+}: {
+  browserEngine: BrowserFfmpegEngine;
+  backendEngine: BackendFfmpegEngine;
+  backendAvailable: boolean;
+  items: VideoItem[];
+  processingMode: ProcessingMode;
+}) {
+  const totalBytes = items.reduce((total, item) => total + item.size, 0);
+  const shouldUseBackend = backendAvailable && (processingMode === "backend" || (processingMode === "auto" && (items.length >= 4 || totalBytes >= 150 * 1024 * 1024)));
+
+  if (processingMode === "backend" && !backendAvailable) {
+    throw new Error("Backend FFmpeg is not available. Install ffmpeg/ffprobe or choose Browser mode.");
+  }
+
+  return shouldUseBackend ? backendEngine : browserEngine;
 }
 
 function SortableClipCard({ item, index, onRemove }: { item: VideoItem; index: number; onRemove: (id: string) => void }) {

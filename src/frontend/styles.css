@@ -117,6 +117,14 @@ p {
   text-transform: uppercase;
 }
 
+.mode-control {
+  display: grid;
+  gap: 4px;
+  color: #c9c5b4;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
 .output-controls input,
 .output-controls select {
   width: 92px;
@@ -378,6 +386,13 @@ p {
 .error-text {
   color: var(--muted);
   line-height: 1.45;
+}
+
+.backend-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.86rem;
 }
 
 .merge-actions {
