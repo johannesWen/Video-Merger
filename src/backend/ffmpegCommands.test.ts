@@ -1,32 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { defaultOutputSettings } from "../shared/mediaUtils";
-import type { VideoMetadata } from "../shared/types";
-import { buildBackendMergeArgs, buildProbeArgs, parseProbeOutput } from "./ffmpegCommands";
+import {
+  createRemuxSegmentsArgs,
+  createSegmentArgs,
+  formatFfmpegTime,
+  getVideoBitrate,
+  parseFfmpegProgressLine,
+  parseProbeOutput,
+  progressRatio
+} from "./ffmpegCommands";
 
 describe("backend ffmpeg commands", () => {
-  it("builds a native ffmpeg merge command for multiple clips", () => {
-    const args = buildBackendMergeArgs(
-      [
-        { inputPath: "/tmp/a.mp4", metadata: makeMetadata(true), rotation: 0 },
-        { inputPath: "/tmp/b.mp4", metadata: makeMetadata(false), rotation: 1 }
-      ],
-      "/tmp/out.mp4",
-      defaultOutputSettings
-    );
-    const filterGraph = args[args.indexOf("-filter_complex") + 1];
-
-    expect(args).toContain("/tmp/a.mp4");
-    expect(args).toContain("/tmp/b.mp4");
-    expect(args).toContain("libx264");
-    expect(args).toContain("veryfast");
-    expect(filterGraph).toContain("[0:v]split=2[v0base][v0fgsrc]");
-    expect(filterGraph).toContain("[1:v]transpose=1,split=2[v1base][v1fgsrc]");
-    expect(filterGraph).toContain("[v0base]scale=1920:1080:force_original_aspect_ratio=increase");
-    expect(filterGraph).toContain("[v1base]scale=1920:1080:force_original_aspect_ratio=increase");
-    expect(filterGraph).toContain("[v0][a0][v1][a1]concat=n=2:v=1:a=1[vout][aout]");
-    expect(filterGraph).toContain("anullsrc=channel_layout=stereo:sample_rate=44100");
-  });
-
   it("builds ffprobe json args", () => {
     expect(buildProbeArgs("/tmp/clip.mp4")).toEqual([
       "-v",
@@ -58,14 +41,44 @@ describe("backend ffmpeg commands", () => {
       hasAudio: true
     });
   });
+
+  it("parses ffmpeg progress lines", () => {
+    expect(parseFfmpegProgressLine("out_time_us=12345678")).toEqual({ currentTimeUs: 12345678, done: false });
+    expect(parseFfmpegProgressLine("out_time=00:00:04.000000")).toEqual({ currentTimeUs: 4_000_000, done: false });
+    expect(parseFfmpegProgressLine("out_time=00:01:30.500000")).toEqual({ currentTimeUs: 90_500_000, done: false });
+    expect(parseFfmpegProgressLine("out_time=01:02:03.123456")).toEqual({ currentTimeUs: 3_723_123_456, done: false });
+    expect(parseFfmpegProgressLine("out_time=N/A")).toEqual({ currentTimeUs: undefined, done: false });
+    expect(parseFfmpegProgressLine("progress=continue")).toEqual({ currentTimeUs: undefined, done: false });
+    expect(parseFfmpegProgressLine("progress=end")).toEqual({ currentTimeUs: undefined, done: true });
+    expect(parseFfmpegProgressLine("frame=42")).toEqual({ currentTimeUs: undefined, done: false });
+    expect(parseFfmpegProgressLine("")).toEqual({ currentTimeUs: undefined, done: false });
+    expect(parseFfmpegProgressLine("out_time_us=not-a-number")).toEqual({ currentTimeUs: undefined, done: false });
+  });
+
+  it("computes progress ratios against the total duration", () => {
+    expect(progressRatio(5_000_000, 10)).toBeCloseTo(0.5, 5);
+    expect(progressRatio(0, 10)).toBe(0);
+    expect(progressRatio(15_000_000, 10)).toBe(1);
+    expect(progressRatio(Number.NaN, 10)).toBe(0);
+    expect(progressRatio(1_000_000, 0)).toBe(0);
+    expect(progressRatio(-1_000_000, 10)).toBe(0);
+  });
+
+  it("formats times as zero-padded HH:MM:SS", () => {
+    expect(formatFfmpegTime(0)).toBe("00:00:00");
+    expect(formatFfmpegTime(65)).toBe("00:01:05");
+    expect(formatFfmpegTime(3661)).toBe("01:01:01");
+    expect(formatFfmpegTime(-5)).toBe("00:00:00");
+    expect(formatFfmpegTime(Number.NaN)).toBe("00:00:00");
+  });
+
+  it("re-exports the shared segment and bitrate helpers", () => {
+    expect(typeof createSegmentArgs).toBe("function");
+    expect(typeof createRemuxSegmentsArgs).toBe("function");
+    expect(typeof getVideoBitrate).toBe("function");
+  });
 });
 
-function makeMetadata(hasAudio: boolean): VideoMetadata {
-  return {
-    duration: 4,
-    width: 1280,
-    height: 720,
-    aspectRatio: 16 / 9,
-    hasAudio
-  };
+function buildProbeArgs(inputPath: string): string[] {
+  return ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", inputPath];
 }

@@ -13,6 +13,6 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/backend/**/*.ts", "src/shared/**/*.ts", "src/processing/ffmpegFilters.ts"],
+  "include": ["src/backend/**/*.ts", "src/shared/**/*.ts", "src/processing/ffmpegFilters.ts", "src/processing/ffmpegSegments.ts"],
   "exclude": ["src/**/*.test.ts"]
 }

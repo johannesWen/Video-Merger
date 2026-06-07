@@ -1,5 +1,10 @@
 import type { ClipRotation, OutputSettings, VideoMetadata } from "../shared/types";
-import { buildLabeledVideoFilter } from "../processing/ffmpegFilters";
+import {
+  buildIndexedAudioFilter,
+  createRemuxSegmentsArgs,
+  createSegmentArgs,
+  getVideoBitrate
+} from "../processing/ffmpegSegments";
 
 export interface BackendClip {
   inputPath: string;
@@ -7,45 +12,7 @@ export interface BackendClip {
   rotation: ClipRotation;
 }
 
-export function buildBackendMergeArgs(clips: BackendClip[], outputPath: string, settings: OutputSettings): string[] {
-  const inputArgs = clips.flatMap((clip) => ["-i", clip.inputPath]);
-  const filterParts = clips.flatMap((clip, index) => [
-    buildLabeledVideoFilter(settings, `[${index}:v]`, `[v${index}]`, clip.rotation),
-    buildBackendAudioFilter(clip, index)
-  ]);
-  const concatInputs = clips.map((_, index) => `[v${index}][a${index}]`).join("");
-  const filterGraph = [...filterParts, `${concatInputs}concat=n=${clips.length}:v=1:a=1[vout][aout]`].join(";");
-
-  return [
-    "-y",
-    ...inputArgs,
-    "-filter_complex",
-    filterGraph,
-    "-map",
-    "[vout]",
-    "-map",
-    "[aout]",
-    "-c:v",
-    "libx264",
-    "-preset",
-    "veryfast",
-    "-crf",
-    "22",
-    "-pix_fmt",
-    "yuv420p",
-    "-c:a",
-    "aac",
-    "-b:a",
-    "160k",
-    "-ar",
-    "44100",
-    "-ac",
-    "2",
-    "-movflags",
-    "+faststart",
-    outputPath
-  ];
-}
+export { buildIndexedAudioFilter, createRemuxSegmentsArgs, createSegmentArgs, getVideoBitrate };
 
 export function buildProbeArgs(inputPath: string): string[] {
   return ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", inputPath];
@@ -68,14 +35,84 @@ export function parseProbeOutput(rawOutput: string): VideoMetadata {
   };
 }
 
-function buildBackendAudioFilter(clip: BackendClip, index: number): string {
-  const duration = Math.max(0.1, clip.metadata.duration).toFixed(3);
+export interface FfmpegProgressUpdate {
+  currentTimeUs?: number;
+  done: boolean;
+}
 
-  if (clip.metadata.hasAudio) {
-    return `[${index}:a:0]atrim=duration=${duration},asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo[a${index}]`;
+export function parseFfmpegProgressLine(line: string): FfmpegProgressUpdate {
+  const trimmed = line.trim();
+
+  if (trimmed === "progress=continue") {
+    return { done: false };
   }
 
-  return `anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${duration},asetpts=PTS-STARTPTS[a${index}]`;
+  if (trimmed === "progress=end") {
+    return { done: true };
+  }
+
+  if (trimmed.startsWith("out_time_us=")) {
+    const value = Number.parseInt(trimmed.slice("out_time_us=".length), 10);
+    return Number.isFinite(value) ? { currentTimeUs: value, done: false } : { done: false };
+  }
+
+  if (trimmed.startsWith("out_time=")) {
+    const value = parseOutTime(trimmed.slice("out_time=".length));
+    return value !== undefined ? { currentTimeUs: value, done: false } : { done: false };
+  }
+
+  return { done: false };
+}
+
+function parseOutTime(rawValue: string): number | undefined {
+  if (rawValue === "N/A" || rawValue.length === 0) {
+    return undefined;
+  }
+
+  const match = rawValue.match(/^(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?$/);
+  if (!match) {
+    return undefined;
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3]);
+  const fractionDigits = match[4] ?? "0";
+  const fraction = fractionDigits.length > 0 ? Number(`0.${fractionDigits}`) : 0;
+
+  if (![hours, minutes, seconds, fraction].every((n) => Number.isFinite(n))) {
+    return undefined;
+  }
+
+  const totalSeconds = hours * 3600 + minutes * 60 + seconds + fraction;
+  return Math.round(totalSeconds * 1_000_000);
+}
+
+export function formatFfmpegTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return "00:00:00";
+  }
+
+  const total = Math.floor(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+
+  const pad = (value: number) => value.toString().padStart(2, "0");
+  return `${pad(hours)}:${pad(minutes)}:${pad(secs)}`;
+}
+
+export function progressRatio(currentTimeUs: number, totalDurationSeconds: number): number {
+  if (!Number.isFinite(currentTimeUs) || !Number.isFinite(totalDurationSeconds) || totalDurationSeconds <= 0) {
+    return 0;
+  }
+
+  const ratio = currentTimeUs / 1_000_000 / totalDurationSeconds;
+  if (!Number.isFinite(ratio) || ratio < 0) {
+    return 0;
+  }
+
+  return ratio > 1 ? 1 : ratio;
 }
 
 interface FfprobeResult {
