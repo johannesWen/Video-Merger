@@ -6,6 +6,7 @@ import {
   getVideoBitrate,
   parseFfmpegProgressLine,
   parseProbeOutput,
+  parseTrimSegments,
   progressRatio
 } from "./ffmpegCommands";
 
@@ -76,6 +77,53 @@ describe("backend ffmpeg commands", () => {
     expect(typeof createSegmentArgs).toBe("function");
     expect(typeof createRemuxSegmentsArgs).toBe("function");
     expect(typeof getVideoBitrate).toBe("function");
+  });
+
+  it("parses trim segment lists from the request body", () => {
+    expect(parseTrimSegments("not-json", 2)).toEqual([undefined, undefined]);
+    expect(parseTrimSegments(JSON.stringify([{ start: 0, end: 1 }]), 2)).toEqual([undefined, undefined]);
+    expect(parseTrimSegments(undefined, 2)).toEqual([undefined, undefined]);
+
+    expect(
+      parseTrimSegments(
+        JSON.stringify([
+          [
+            { start: 0, end: 2 },
+            { start: 5, end: 8 }
+          ],
+          []
+        ]),
+        2
+      )
+    ).toEqual([
+      [
+        { start: 0, end: 2 },
+        { start: 5, end: 8 }
+      ],
+      undefined
+    ]);
+  });
+
+  it("drops invalid trim segment entries while keeping the rest of the list", () => {
+    const parsed = parseTrimSegments(
+      JSON.stringify([
+        [
+          { start: 0, end: 1 },
+          { start: 5, end: 5 },
+          { start: "x", end: 2 },
+          { end: 3 },
+          { start: 4, end: 6 }
+        ]
+      ]),
+      1
+    );
+
+    expect(parsed).toEqual([
+      [
+        { start: 0, end: 1 },
+        { start: 4, end: 6 }
+      ]
+    ]);
   });
 });
 

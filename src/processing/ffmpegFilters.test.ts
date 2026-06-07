@@ -100,6 +100,73 @@ describe("ffmpeg filters", () => {
     expect(args.at(-1)).toBe("segment.ts");
   });
 
+  it("keeps the original single-source filter when no trim segments are set", () => {
+    const args = createSegmentArgs("input.mp4", "segment.ts", makeItem(true), defaultOutputSettings);
+    const filter = args[args.indexOf("-filter_complex") + 1];
+
+    expect(filter.startsWith("[0:v]split=2")).toBe(true);
+    expect(filter).not.toContain("trim=");
+    expect(filter).not.toContain("atrim=");
+  });
+
+  it("adds a single trim+setpts when the kept range is a contiguous sub-clip", () => {
+    const item = makeItem(true, { trimSegments: [{ start: 1.5, end: 4 }] });
+    const args = createSegmentArgs("input.mp4", "segment.ts", item, defaultOutputSettings);
+    const filter = args[args.indexOf("-filter_complex") + 1];
+
+    expect(filter).toContain("[0:v]trim=start=1.500:end=4.000,setpts=PTS-STARTPTS[vcraw]");
+    expect(filter).toContain("[0:a]atrim=start=1.500:end=4.000,asetpts=PTS-STARTPTS[ac]");
+    expect(filter).toContain("boxblur=24:2");
+  });
+
+  it("adds a trim+concat graph when the clip has multiple kept ranges", () => {
+    const item = makeItem(true, {
+      metadata: { duration: 10, width: 1280, height: 720, aspectRatio: 16 / 9, hasAudio: true },
+      trimSegments: [
+        { start: 0, end: 2 },
+        { start: 5, end: 8 }
+      ]
+    });
+    const args = createSegmentArgs("input.mp4", "segment.ts", item, defaultOutputSettings);
+    const filter = args[args.indexOf("-filter_complex") + 1];
+
+    expect(filter).toContain("[0:v]split=2[v0src][v1src]");
+    expect(filter).toContain("[v0src]trim=start=0.000:end=2.000,setpts=PTS-STARTPTS[v0]");
+    expect(filter).toContain("[v1src]trim=start=5.000:end=8.000,setpts=PTS-STARTPTS[v1]");
+    expect(filter).toContain("[v0][v1]concat=n=2:v=1:a=0[vcraw]");
+    expect(filter).toContain("[0:a]asplit=2[a0src][a1src]");
+    expect(filter).toContain("[a0src]atrim=start=0.000:end=2.000,asetpts=PTS-STARTPTS[a0]");
+    expect(filter).toContain("[a0][a1]concat=n=2:v=0:a=1[ac]");
+    expect(filter).toContain("boxblur=24:2");
+    expect(args[args.indexOf("-map", args.indexOf("[v]") + 1) + 1]).toBe("[ac]");
+  });
+
+  it("uses the kept duration for the silent audio fallback when the clip has no audio", () => {
+    const item = makeItem(false, {
+      metadata: { duration: 10, width: 1280, height: 720, aspectRatio: 16 / 9, hasAudio: false },
+      trimSegments: [
+        { start: 0, end: 2 },
+        { start: 5, end: 8 }
+      ]
+    });
+    const args = createSegmentArgs("input.mp4", "segment.ts", item, defaultOutputSettings);
+
+    expect(args).toContain("5.000");
+    expect(args).toContain("anullsrc=channel_layout=stereo:sample_rate=44100");
+    const tIndex = args.indexOf("-t");
+    expect(tIndex).toBeGreaterThan(-1);
+    expect(args[tIndex + 1]).toBe("5.000");
+  });
+
+  it("falls back to a single contiguous range for an empty trim list", () => {
+    const item = makeItem(true, { trimSegments: [] });
+    const args = createSegmentArgs("input.mp4", "segment.ts", item, defaultOutputSettings);
+    const filter = args[args.indexOf("-filter_complex") + 1];
+
+    expect(filter.startsWith("[0:v]split=2")).toBe(true);
+    expect(filter).not.toContain("trim=");
+  });
+
   it("remuxes transport stream segments into the final MP4", () => {
     const args = createRemuxSegmentsArgs(["segment-0.ts", "segment-1.ts"], "merged.mp4");
 
@@ -116,7 +183,7 @@ describe("ffmpeg filters", () => {
   });
 });
 
-function makeItem(hasAudio: boolean): VideoItem {
+function makeItem(hasAudio: boolean, overrides: Partial<VideoItem> = {}): VideoItem {
   return {
     id: "clip",
     file: new File(["video"], "clip.mp4", { type: "video/mp4" }),
@@ -133,6 +200,7 @@ function makeItem(hasAudio: boolean): VideoItem {
       height: 720,
       aspectRatio: 16 / 9,
       hasAudio
-    }
+    },
+    ...overrides
   };
 }

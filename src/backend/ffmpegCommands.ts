@@ -1,4 +1,4 @@
-import type { ClipRotation, OutputSettings, VideoMetadata } from "../shared/types";
+import type { ClipRotation, OutputSettings, TrimSegment, VideoMetadata } from "../shared/types";
 import {
   buildIndexedAudioFilter,
   createRemuxSegmentsArgs,
@@ -10,9 +10,52 @@ export interface BackendClip {
   inputPath: string;
   metadata: VideoMetadata;
   rotation: ClipRotation;
+  trimSegments?: TrimSegment[];
 }
 
 export { buildIndexedAudioFilter, createRemuxSegmentsArgs, createSegmentArgs, getVideoBitrate };
+
+export function parseTrimSegments(rawTrims: unknown, length: number): Array<TrimSegment[] | undefined> {
+  const fallback = (): Array<TrimSegment[] | undefined> => Array.from({ length }, () => undefined);
+
+  if (typeof rawTrims !== "string" || length === 0) {
+    return fallback();
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawTrims);
+  } catch {
+    return fallback();
+  }
+
+  if (!Array.isArray(parsed) || parsed.length !== length) {
+    return fallback();
+  }
+
+  return parsed.map((value) => normalizeTrimSegments(value));
+}
+
+function normalizeTrimSegments(value: unknown): TrimSegment[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) {
+    return undefined;
+  }
+
+  const result: TrimSegment[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const start = Number((entry as { start?: unknown }).start);
+    const end = Number((entry as { end?: unknown }).end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      continue;
+    }
+    result.push({ start: Math.max(0, start), end });
+  }
+
+  return result.length > 0 ? result : undefined;
+}
 
 export function buildProbeArgs(inputPath: string): string[] {
   return ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", inputPath];

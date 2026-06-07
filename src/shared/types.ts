@@ -15,6 +15,11 @@ export interface PreviewAsset {
   thumbnailUrl: string;
 }
 
+export interface TrimSegment {
+  start: number;
+  end: number;
+}
+
 export interface VideoItem {
   id: string;
   file: File;
@@ -28,6 +33,7 @@ export interface VideoItem {
   status: "queued" | "probing" | "ready" | "error";
   error?: string;
   rotation: ClipRotation;
+  trimSegments?: TrimSegment[];
 }
 
 export interface OutputSettings {

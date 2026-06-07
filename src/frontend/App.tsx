@@ -44,7 +44,8 @@ import {
   sortByCreationDate,
   validateVideoFiles
 } from "../shared/mediaUtils";
-import type { AspectHandling, MergeProgress, OutputSettings, ProcessingMode, VideoItem } from "../shared/types";
+import { effectiveDuration, isPristine, normalizeSegments } from "../shared/trimSegments";
+import type { AspectHandling, MergeProgress, OutputSettings, ProcessingMode, TrimSegment, VideoItem } from "../shared/types";
 
 type AppStatus = "idle" | "probing" | "ready" | "merging" | "complete" | "error";
 
@@ -237,6 +238,20 @@ export function App() {
     );
   };
 
+  const handleCommitTrim = (item: VideoItem, segments: TrimSegment[]) => {
+    const duration = item.metadata?.duration ?? 0;
+    const normalized = normalizeSegments(segments, duration);
+    const pristine = isPristine(normalized, duration);
+    resetDownload();
+    setItems((currentItems) =>
+      currentItems.map((currentItem) =>
+        currentItem.id === item.id
+          ? { ...currentItem, trimSegments: pristine ? undefined : normalized }
+          : currentItem
+      )
+    );
+  };
+
   const handleClear = () => {
     resetDownload();
     setError(null);
@@ -412,7 +427,11 @@ export function App() {
       </section>
     </main>
 
-    <ClipPreviewModal item={previewingItem} onClose={() => setPreviewingItem(null)} />
+    <ClipPreviewModal
+      item={previewingItem}
+      onClose={() => setPreviewingItem(null)}
+      onCommitSegments={handleCommitTrim}
+    />
     </>
   );
 }
@@ -652,7 +671,11 @@ function SortableClipCard({
         <div className="clip-meta">
           <span>{formatDate(item.createdAt)}</span>
           <span>{formatBytes(item.size)}</span>
-          <span>{formatDuration(item.metadata?.duration)}</span>
+          <span>
+            {item.trimSegments && item.trimSegments.length > 0
+              ? `${formatDuration(effectiveDuration(item))} / ${formatDuration(item.metadata?.duration)}`
+              : formatDuration(item.metadata?.duration)}
+          </span>
         </div>
         {item.error && <p className="clip-error">{item.error}</p>}
       </div>
@@ -662,6 +685,11 @@ function SortableClipCard({
         <span>{item.metadata ? `${item.metadata.aspectRatio.toFixed(2)}:1` : "..."}</span>
         <span>{item.metadata?.hasAudio ? "audio" : "silent ok"}</span>
         {item.rotation !== 0 && <span className="clip-badge-rotation">{rotationDeg}°</span>}
+        {item.trimSegments && item.trimSegments.length > 0 && (
+          <span className="clip-badge-trim" title="Trimmed">
+            trimmed
+          </span>
+        )}
       </div>
 
       <button

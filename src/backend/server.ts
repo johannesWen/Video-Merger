@@ -8,12 +8,14 @@ import readline from "node:readline";
 import express from "express";
 import multer from "multer";
 import type { ClipRotation, OutputSettings } from "../shared/types";
+import { effectiveDuration } from "../shared/trimSegments";
 import {
   createRemuxSegmentsArgs,
   createSegmentArgs,
   formatFfmpegTime,
   parseFfmpegProgressLine,
   parseProbeOutput,
+  parseTrimSegments,
   progressRatio,
   type BackendClip
 } from "./ffmpegCommands";
@@ -94,9 +96,11 @@ app.post("/api/merge", upload.array("videos"), async (request, response) => {
 
   let settings: OutputSettings;
   let rotations: ClipRotation[];
+  let trimSegmentsList: Array<ReturnType<typeof parseTrimSegments>[number]>;
   try {
     settings = parseSettings(request.body.settings);
     rotations = parseRotations(request.body.rotations, files.length);
+    trimSegmentsList = parseTrimSegments(request.body.trims, files.length);
   } catch (parseError) {
     await cleanupFiles(files);
     response.status(400).json({ error: getErrorMessage(parseError) });
@@ -111,7 +115,12 @@ app.post("/api/merge", upload.array("videos"), async (request, response) => {
   for (const [index, file] of files.entries()) {
     try {
       const metadata = await probeFile(file.path);
-      clips.push({ inputPath: file.path, metadata, rotation: rotations[index] });
+      clips.push({
+        inputPath: file.path,
+        metadata,
+        rotation: rotations[index],
+        trimSegments: trimSegmentsList[index]
+      });
     } catch (probeError) {
       await cleanup(files, workDir);
       response.status(500).json({ error: getErrorMessage(probeError) });
@@ -119,7 +128,10 @@ app.post("/api/merge", upload.array("videos"), async (request, response) => {
     }
   }
 
-  const totalDuration = clips.reduce((sum, clip) => sum + Math.max(0.1, clip.metadata.duration), 0);
+  const totalDuration = clips.reduce(
+    (sum, clip) => sum + Math.max(0.1, effectiveDuration(clip)),
+    0
+  );
   const segmentPaths = clips.map((_, index) => path.join(workDir, `segment-${index}.ts`));
 
   const job: MergeJob = {
@@ -387,7 +399,7 @@ async function runMergeJob(job: MergeJob): Promise<void> {
 function buildProgressSnapshot(job: MergeJob): JobProgress {
   const clipCount = job.clips.length;
   const currentClip = job.clips[job.currentClipIndex];
-  const clipDuration = Math.max(0.1, currentClip?.metadata.duration ?? job.totalDuration);
+  const clipDuration = Math.max(0.1, currentClip ? effectiveDuration(currentClip) : job.totalDuration);
   const currentClipRatio = progressRatio(job.currentTimeUs, clipDuration);
   const totalRatio = job.phase === "encoding"
     ? (job.currentClipIndex + currentClipRatio) / Math.max(1, clipCount)
@@ -454,7 +466,8 @@ function makeVideoItemForFilter(clip: BackendClip) {
     createdAt: 0,
     status: "ready" as const,
     rotation: clip.rotation,
-    metadata: clip.metadata
+    metadata: clip.metadata,
+    trimSegments: clip.trimSegments
   };
 }
 
