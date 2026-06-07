@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import express from "express";
 import multer from "multer";
-import type { OutputSettings } from "../shared/types";
+import type { ClipRotation, OutputSettings } from "../shared/types";
 import { buildBackendMergeArgs, buildProbeArgs, parseProbeOutput, type BackendClip } from "./ffmpegCommands";
 
 const port = Number(process.env.PORT ?? 5174);
@@ -42,13 +42,14 @@ app.post("/api/merge", upload.array("videos"), async (request, response) => {
     }
 
     const settings = parseSettings(request.body.settings);
+    const rotations = parseRotations(request.body.rotations, files.length);
     workDir = await mkdtemp(path.join(tmpdir(), "video-merger-"));
     const outputPath = path.join(workDir, "merged-video.mp4");
 
     const clips: BackendClip[] = [];
-    for (const file of files) {
+    for (const [index, file] of files.entries()) {
       const metadata = await probeFile(file.path);
-      clips.push({ inputPath: file.path, metadata });
+      clips.push({ inputPath: file.path, metadata, rotation: rotations[index] });
     }
 
     await runCommand("ffmpeg", buildBackendMergeArgs(clips, outputPath, settings));
@@ -110,6 +111,34 @@ function parseSettings(rawSettings: unknown): OutputSettings {
   }
 
   return settings;
+}
+
+function parseRotations(rawRotations: unknown, length: number): ClipRotation[] {
+  const fallback = (): ClipRotation[] => Array.from({ length }, () => 0 as ClipRotation);
+
+  if (typeof rawRotations !== "string" || length === 0) {
+    return fallback();
+  }
+
+  try {
+    const parsed = JSON.parse(rawRotations) as unknown;
+    if (!Array.isArray(parsed) || parsed.length !== length) {
+      return fallback();
+    }
+
+    return parsed.map((value) => normalizeRotation(value));
+  } catch {
+    return fallback();
+  }
+}
+
+function normalizeRotation(value: unknown): ClipRotation {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (numeric === 1 || numeric === 2 || numeric === 3) {
+    return numeric;
+  }
+
+  return 0;
 }
 
 async function commandExists(command: string): Promise<boolean> {

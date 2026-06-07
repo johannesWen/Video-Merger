@@ -25,6 +25,7 @@ export class BackendFfmpegEngine implements Pick<ProcessingEngine, "merge" | "ca
     this.abortController = new AbortController();
     const formData = new FormData();
     formData.set("settings", JSON.stringify(settings));
+    formData.set("rotations", JSON.stringify(items.map((item) => item.rotation)));
     items.forEach((item) => formData.append("videos", item.file, item.name));
 
     onProgress({

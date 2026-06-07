@@ -23,6 +23,32 @@ describe("ffmpeg filters", () => {
     expect(filter).toContain("format=yuv420p[v]");
   });
 
+  it("prepends a single transpose=1 for 90° rotation", () => {
+    const filter = buildVideoFilter(defaultOutputSettings, 1);
+
+    expect(filter.startsWith("[0:v]transpose=1,split=2")).toBe(true);
+  });
+
+  it("prepends two transpose=1 filters for 180° rotation", () => {
+    const filter = buildVideoFilter(defaultOutputSettings, 2);
+
+    expect(filter.startsWith("[0:v]transpose=1,transpose=1,split=2")).toBe(true);
+  });
+
+  it("prepends transpose=2 for 270° rotation", () => {
+    const filter = buildVideoFilter(defaultOutputSettings, 3);
+
+    expect(filter.startsWith("[0:v]transpose=2,split=2")).toBe(true);
+  });
+
+  it("applies the rotation prefix to the letterbox chain", () => {
+    const settings = { ...defaultOutputSettings, aspectHandling: "letterbox" as const };
+    const filter = buildVideoFilter(settings, 1);
+
+    expect(filter.startsWith("[0:v]transpose=1,scale=")).toBe(true);
+    expect(filter).toContain("pad=1920:1080");
+  });
+
   it("adds a silent fallback audio source when a clip has no audio", () => {
     const item = makeItem(false);
     const args = createNormalizeArgs("input.mp4", "clip.mp4", item, defaultOutputSettings);
@@ -100,6 +126,7 @@ function makeItem(hasAudio: boolean): VideoItem {
     mimeType: "video/mp4",
     createdAt: 1,
     status: "ready",
+    rotation: 0,
     metadata: {
       duration: 4,
       width: 1280,

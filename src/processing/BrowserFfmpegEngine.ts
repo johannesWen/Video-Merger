@@ -297,7 +297,7 @@ export function createNormalizeArgs(inputName: string, outputName: string, item:
   const duration = Math.max(0.1, item.metadata?.duration ?? 0.1).toFixed(3);
   const baseArgs = ["-i", inputName];
   const hasAudio = item.metadata?.hasAudio === true;
-  const filter = buildVideoFilter(settings);
+  const filter = buildVideoFilter(settings, item.rotation);
   const videoArgs = [
     "-filter_complex",
     filter,
@@ -331,7 +331,7 @@ export function createSegmentArgs(inputName: string, outputName: string, item: V
     inputName,
     ...(hasAudio ? [] : silentAudioInput),
     "-filter_complex",
-    buildVideoFilter(settings),
+    buildVideoFilter(settings, item.rotation),
     "-map",
     "[v]",
     ...audioMap,
@@ -440,7 +440,7 @@ export function createSinglePassMergeArgs(
 ): string[] {
   const inputArgs = inputNames.flatMap((inputName) => ["-i", inputName]);
   const filterParts = items.flatMap((item, index) => [
-    buildLabeledVideoFilter(settings, `[${index}:v]`, `[v${index}]`),
+    buildLabeledVideoFilter(settings, `[${index}:v]`, `[v${index}]`, item.rotation),
     buildAudioFilter(item, index)
   ]);
   const concatInputs = items.map((_, index) => `[v${index}][a${index}]`).join("");

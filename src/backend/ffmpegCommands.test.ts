@@ -7,8 +7,8 @@ describe("backend ffmpeg commands", () => {
   it("builds a native ffmpeg merge command for multiple clips", () => {
     const args = buildBackendMergeArgs(
       [
-        { inputPath: "/tmp/a.mp4", metadata: makeMetadata(true) },
-        { inputPath: "/tmp/b.mp4", metadata: makeMetadata(false) }
+        { inputPath: "/tmp/a.mp4", metadata: makeMetadata(true), rotation: 0 },
+        { inputPath: "/tmp/b.mp4", metadata: makeMetadata(false), rotation: 1 }
       ],
       "/tmp/out.mp4",
       defaultOutputSettings
@@ -19,6 +19,10 @@ describe("backend ffmpeg commands", () => {
     expect(args).toContain("/tmp/b.mp4");
     expect(args).toContain("libx264");
     expect(args).toContain("veryfast");
+    expect(filterGraph).toContain("[0:v]split=2[v0base][v0fgsrc]");
+    expect(filterGraph).toContain("[1:v]transpose=1,split=2[v1base][v1fgsrc]");
+    expect(filterGraph).toContain("[v0base]scale=1920:1080:force_original_aspect_ratio=increase");
+    expect(filterGraph).toContain("[v1base]scale=1920:1080:force_original_aspect_ratio=increase");
     expect(filterGraph).toContain("[v0][a0][v1][a1]concat=n=2:v=1:a=1[vout][aout]");
     expect(filterGraph).toContain("anullsrc=channel_layout=stereo:sample_rate=44100");
   });

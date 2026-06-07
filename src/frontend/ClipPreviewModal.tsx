@@ -1,6 +1,6 @@
 import { Pause, Play, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { formatDuration } from "../shared/mediaUtils";
+import { formatDuration, isTransposed, rotationDegrees } from "../shared/mediaUtils";
 import type { VideoItem } from "../shared/types";
 
 const SCRUB_STEP_SECONDS = 5;
@@ -161,6 +161,16 @@ export function ClipPreviewModal({ item, onClose }: ClipPreviewModalProps) {
     return null;
   }
 
+  const rotationDeg = rotationDegrees(item.rotation);
+  const portrait = isTransposed(item.rotation);
+  const videoStyle: React.CSSProperties = rotationDeg
+    ? {
+        transform: `rotate(${rotationDeg}deg)`,
+        maxHeight: portrait ? "min(70vw, calc(100vh - 220px))" : "70vh",
+        maxWidth: portrait ? "min(96vw, 540px)" : "100%"
+      }
+    : {};
+
   return (
     <div className="preview-modal-backdrop" onMouseDown={handleBackdropMouseDown}>
       <div
@@ -197,6 +207,7 @@ export function ClipPreviewModal({ item, onClose }: ClipPreviewModalProps) {
           onPlay={handlePlay}
           onPause={handlePause}
           onEnded={handleEnded}
+          style={videoStyle}
         />
 
         <div className="preview-modal-controls">

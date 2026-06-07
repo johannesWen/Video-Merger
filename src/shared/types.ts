@@ -1,6 +1,7 @@
 export type AspectHandling = "fit-blur" | "center-crop" | "letterbox";
 export type MergePhase = "idle" | "probing" | "normalizing" | "concatenating" | "complete" | "error";
 export type ProcessingMode = "auto" | "backend" | "browser";
+export type ClipRotation = 0 | 1 | 2 | 3;
 
 export interface VideoMetadata {
   duration: number;
@@ -26,6 +27,7 @@ export interface VideoItem {
   metadata?: VideoMetadata;
   status: "queued" | "probing" | "ready" | "error";
   error?: string;
+  rotation: ClipRotation;
 }
 
 export interface OutputSettings {

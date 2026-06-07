@@ -1,15 +1,16 @@
-import type { OutputSettings, VideoMetadata } from "../shared/types";
+import type { ClipRotation, OutputSettings, VideoMetadata } from "../shared/types";
 import { buildLabeledVideoFilter } from "../processing/ffmpegFilters";
 
 export interface BackendClip {
   inputPath: string;
   metadata: VideoMetadata;
+  rotation: ClipRotation;
 }
 
 export function buildBackendMergeArgs(clips: BackendClip[], outputPath: string, settings: OutputSettings): string[] {
   const inputArgs = clips.flatMap((clip) => ["-i", clip.inputPath]);
   const filterParts = clips.flatMap((clip, index) => [
-    buildLabeledVideoFilter(settings, `[${index}:v]`, `[v${index}]`),
+    buildLabeledVideoFilter(settings, `[${index}:v]`, `[v${index}]`, clip.rotation),
     buildBackendAudioFilter(clip, index)
   ]);
   const concatInputs = clips.map((_, index) => `[v${index}][a${index}]`).join("");

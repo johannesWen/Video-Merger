@@ -21,6 +21,7 @@ import {
   GripVertical,
   Loader2,
   RotateCcw,
+  RotateCw,
   Scissors,
   Server,
   Trash2,
@@ -33,10 +34,13 @@ import { BrowserFfmpegEngine } from "../processing/BrowserFfmpegEngine";
 import { ClipPreviewModal } from "./ClipPreviewModal";
 import {
   createVideoItem,
+  cycleClipRotation,
   defaultOutputSettings,
   formatBytes,
   formatDate,
   formatDuration,
+  isTransposed,
+  rotationDegrees,
   sortByCreationDate,
   validateVideoFiles
 } from "../shared/mediaUtils";
@@ -222,6 +226,17 @@ export function App() {
     });
   };
 
+  const handleRotate = (id: string) => {
+    resetDownload();
+    setItems((currentItems) =>
+      currentItems.map((currentItem) =>
+        currentItem.id === id
+          ? { ...currentItem, rotation: cycleClipRotation(currentItem.rotation) }
+          : currentItem
+      )
+    );
+  };
+
   const handleClear = () => {
     resetDownload();
     setError(null);
@@ -348,7 +363,7 @@ export function App() {
                 <SortableContext items={items.map((item) => item.id)} strategy={verticalListSortingStrategy}>
                   <ol className="clip-list">
                     {items.map((item, index) => (
-                      <SortableClipCard key={item.id} item={item} index={index} onRemove={handleRemove} onPreview={setPreviewingItem} />
+                      <SortableClipCard key={item.id} item={item} index={index} onRemove={handleRemove} onPreview={setPreviewingItem} onRotate={handleRotate} />
                     ))}
                   </ol>
                 </SortableContext>
@@ -539,7 +554,19 @@ function chooseMergeEngine({
   return shouldUseBackend ? backendEngine : browserEngine;
 }
 
-function SortableClipCard({ item, index, onRemove, onPreview }: { item: VideoItem; index: number; onRemove: (id: string) => void; onPreview: (item: VideoItem) => void }) {
+function SortableClipCard({
+  item,
+  index,
+  onRemove,
+  onPreview,
+  onRotate
+}: {
+  item: VideoItem;
+  index: number;
+  onRemove: (id: string) => void;
+  onPreview: (item: VideoItem) => void;
+  onRotate: (id: string) => void;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const style = {
@@ -577,6 +604,8 @@ function SortableClipCard({ item, index, onRemove, onPreview }: { item: VideoIte
   };
 
   const canPreview = item.status === "ready";
+  const rotationDeg = rotationDegrees(item.rotation);
+  const previewAspect = computePreviewAspect(item);
 
   return (
     <li ref={setNodeRef} style={style} className={`clip-card ${isDragging ? "is-dragging" : ""}`}>
@@ -596,8 +625,18 @@ function SortableClipCard({ item, index, onRemove, onPreview }: { item: VideoIte
         tabIndex={canPreview ? 0 : -1}
         aria-label={canPreview ? `Open preview of ${item.name}` : undefined}
         aria-disabled={!canPreview}
+        style={{ ["--preview-aspect" as string]: previewAspect }}
       >
-        <video ref={videoRef} src={item.objectUrl} poster={item.previewUrl} muted playsInline preload="metadata" />
+        <video
+          ref={videoRef}
+          src={item.objectUrl}
+          poster={item.previewUrl}
+          muted
+          playsInline
+          preload="metadata"
+          className={item.rotation ? "is-rotated" : undefined}
+          style={item.rotation ? { transform: `rotate(${rotationDeg}deg)` } : undefined}
+        />
         {item.status === "probing" && (
           <div className="preview-busy">
             <Loader2 className="spin" aria-hidden="true" size={20} />
@@ -622,13 +661,35 @@ function SortableClipCard({ item, index, onRemove, onPreview }: { item: VideoIte
         <span>{item.metadata ? `${item.metadata.width}x${item.metadata.height}` : "probing"}</span>
         <span>{item.metadata ? `${item.metadata.aspectRatio.toFixed(2)}:1` : "..."}</span>
         <span>{item.metadata?.hasAudio ? "audio" : "silent ok"}</span>
+        {item.rotation !== 0 && <span className="clip-badge-rotation">{rotationDeg}°</span>}
       </div>
+
+      <button
+        className="icon-button"
+        type="button"
+        onClick={() => onRotate(item.id)}
+        title="Rotate 90°"
+        aria-label={`Rotate ${item.name} 90°`}
+        aria-pressed={item.rotation !== 0}
+      >
+        <RotateCw aria-hidden="true" size={18} />
+      </button>
 
       <button className="icon-button" type="button" onClick={() => onRemove(item.id)} title="Remove clip" aria-label={`Remove ${item.name}`}>
         <Trash2 aria-hidden="true" size={18} />
       </button>
     </li>
   );
+}
+
+function computePreviewAspect(item: VideoItem): string {
+  const metadata = item.metadata;
+  if (!metadata || metadata.width <= 0 || metadata.height <= 0) {
+    return "16 / 9";
+  }
+
+  const ratio = isTransposed(item.rotation) ? metadata.height / metadata.width : metadata.width / metadata.height;
+  return `${ratio} / 1`;
 }
 
 function statusLabel(status: AppStatus, hasBlockingItem: boolean): string {

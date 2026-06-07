@@ -1,4 +1,4 @@
-import type { OutputSettings, VideoItem } from "./types";
+import type { ClipRotation, OutputSettings, VideoItem } from "./types";
 
 export const defaultOutputSettings: OutputSettings = {
   width: 1920,
@@ -98,6 +98,19 @@ export function createVideoItem(file: File): VideoItem {
     size: file.size,
     mimeType: file.type || "video/mp4",
     createdAt: file.lastModified,
-    status: "queued"
+    status: "queued",
+    rotation: 0
   };
+}
+
+export function cycleClipRotation(rotation: ClipRotation): ClipRotation {
+  return ((rotation + 1) % 4) as ClipRotation;
+}
+
+export function rotationDegrees(rotation: ClipRotation): number {
+  return rotation * 90;
+}
+
+export function isTransposed(rotation: ClipRotation): boolean {
+  return rotation % 2 === 1;
 }
