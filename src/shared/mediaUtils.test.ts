@@ -38,9 +38,9 @@ describe("media utilities", () => {
 
   it("keeps landscape MP4 defaults", () => {
     expect(defaultOutputSettings).toMatchObject({
-      width: 1280,
-      height: 720,
-      aspectLabel: "16:9 720p",
+      width: 1920,
+      height: 1080,
+      aspectLabel: "16:9 1080p",
       aspectHandling: "fit-blur",
       format: "mp4"
     });

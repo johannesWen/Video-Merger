@@ -30,6 +30,7 @@ import {
 import { type ChangeEvent, type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BackendFfmpegEngine, getBackendHealth } from "../processing/BackendFfmpegEngine";
 import { BrowserFfmpegEngine } from "../processing/BrowserFfmpegEngine";
+import { ClipPreviewModal } from "./ClipPreviewModal";
 import {
   createVideoItem,
   defaultOutputSettings,
@@ -71,6 +72,7 @@ export function App() {
   const [processingMode, setProcessingMode] = useState<ProcessingMode>("auto");
   const [backendAvailable, setBackendAvailable] = useState(false);
   const [backendMessage, setBackendMessage] = useState("Checking backend");
+  const [previewingItem, setPreviewingItem] = useState<VideoItem | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -299,6 +301,7 @@ export function App() {
   };
 
   return (
+    <>
     <main className="app-shell">
       <header className="topbar">
         <div className="brand-lockup">
@@ -345,7 +348,7 @@ export function App() {
                 <SortableContext items={items.map((item) => item.id)} strategy={verticalListSortingStrategy}>
                   <ol className="clip-list">
                     {items.map((item, index) => (
-                      <SortableClipCard key={item.id} item={item} index={index} onRemove={handleRemove} />
+                      <SortableClipCard key={item.id} item={item} index={index} onRemove={handleRemove} onPreview={setPreviewingItem} />
                     ))}
                   </ol>
                 </SortableContext>
@@ -393,6 +396,9 @@ export function App() {
         </aside>
       </section>
     </main>
+
+    <ClipPreviewModal item={previewingItem} onClose={() => setPreviewingItem(null)} />
+    </>
   );
 }
 
@@ -533,7 +539,7 @@ function chooseMergeEngine({
   return shouldUseBackend ? backendEngine : browserEngine;
 }
 
-function SortableClipCard({ item, index, onRemove }: { item: VideoItem; index: number; onRemove: (id: string) => void }) {
+function SortableClipCard({ item, index, onRemove, onPreview }: { item: VideoItem; index: number; onRemove: (id: string) => void; onPreview: (item: VideoItem) => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const style = {
@@ -559,6 +565,19 @@ function SortableClipCard({ item, index, onRemove }: { item: VideoItem; index: n
     video.currentTime = 0;
   };
 
+  const handlePreviewActivate = (event: React.MouseEvent<HTMLDivElement> | React.KeyboardEvent<HTMLDivElement>) => {
+    if ("key" in event && event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    if ("preventDefault" in event) {
+      event.preventDefault();
+    }
+    pausePreview();
+    onPreview(item);
+  };
+
+  const canPreview = item.status === "ready";
+
   return (
     <li ref={setNodeRef} style={style} className={`clip-card ${isDragging ? "is-dragging" : ""}`}>
       <button className="drag-handle" type="button" title="Move clip" aria-label={`Move ${item.name}`} {...attributes} {...listeners}>
@@ -567,7 +586,17 @@ function SortableClipCard({ item, index, onRemove }: { item: VideoItem; index: n
 
       <div className="clip-index">{String(index + 1).padStart(2, "0")}</div>
 
-      <div className="preview-frame" onMouseEnter={playPreview} onMouseLeave={pausePreview}>
+      <div
+        className="preview-frame"
+        onMouseEnter={canPreview ? playPreview : undefined}
+        onMouseLeave={canPreview ? pausePreview : undefined}
+        onClick={canPreview ? handlePreviewActivate : undefined}
+        onKeyDown={canPreview ? handlePreviewActivate : undefined}
+        role={canPreview ? "button" : undefined}
+        tabIndex={canPreview ? 0 : -1}
+        aria-label={canPreview ? `Open preview of ${item.name}` : undefined}
+        aria-disabled={!canPreview}
+      >
         <video ref={videoRef} src={item.objectUrl} poster={item.previewUrl} muted playsInline preload="metadata" />
         {item.status === "probing" && (
           <div className="preview-busy">
