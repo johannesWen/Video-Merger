@@ -1,8 +1,7 @@
 import { Pause, Play, Scissors, X } from "lucide-react";
-import {
+import React, {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -15,7 +14,6 @@ import {
   findSegmentIndexAt,
   isPristine,
   isTimeInKeptRegion,
-  joinWithNext,
   normalizeSegments,
   removeSegment,
   splitAt,
@@ -42,7 +40,7 @@ const TRACK_PADDING_PX = 8;
 export function ClipPreviewModal({ item, onClose, onCommitSegments }: ClipPreviewModalProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const trackRef = useRef<HTMLDivElement>(null);
+  const trackRef = useRef<HTMLDivElement | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -204,7 +202,7 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments }: ClipPrevie
     [onClose]
   );
 
-  const trackWidth = useElementWidth(trackRef);
+  const [setTrackRef, trackWidth] = useElementWidth(trackRef);
 
   const pointerToTime = useCallback(
     (clientX: number) => {
@@ -310,7 +308,7 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments }: ClipPrevie
   }, [currentTime, localSegments, sourceDuration]);
 
   const handleRemoveSegment = useCallback((index: number) => {
-    setLocalSegments((current) => joinWithNext(current, index));
+    setLocalSegments((current) => removeSegment(current, index));
   }, []);
 
   const handleReset = useCallback(() => {
@@ -380,6 +378,7 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments }: ClipPrevie
         </h2>
 
         <video
+          key={item.id}
           ref={videoRef}
           className="preview-modal-video"
           src={item.objectUrl}
@@ -426,7 +425,7 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments }: ClipPrevie
           segments={localSegments}
           currentTime={currentTime}
           onSeek={seekTo}
-          trackRef={trackRef}
+          trackRef={setTrackRef}
           trackWidth={trackWidth}
           pointerToTime={pointerToTime}
           onEdgePointerDown={handleSegmentEdgePointerDown}
@@ -501,7 +500,7 @@ function TrimEditor({
   segments: TrimSegment[];
   currentTime: number;
   onSeek: (time: number) => void;
-  trackRef: React.RefObject<HTMLDivElement>;
+  trackRef: React.RefCallback<HTMLDivElement>;
   trackWidth: number;
   pointerToTime: (clientX: number) => number;
   onEdgePointerDown: (
@@ -617,8 +616,8 @@ function TrimEditor({
                 type="button"
                 className="trim-segment-remove"
                 onClick={() => onRemoveSegment(index)}
-                aria-label={`Merge segment ${index + 1} with the next`}
-                title="Merge with next"
+                aria-label={`Remove segment ${index + 1} from output`}
+                title="Remove this segment"
               >
                 <X aria-hidden="true" size={14} />
               </button>
@@ -630,26 +629,52 @@ function TrimEditor({
   );
 }
 
-function useElementWidth(ref: React.RefObject<HTMLElement>): number {
+function useElementWidth(
+  externalRef?: React.MutableRefObject<HTMLElement | null>
+): [React.RefCallback<HTMLElement>, number] {
   const [width, setWidth] = useState(0);
+  const observerRef = useRef<ResizeObserver | null>(null);
+  const elementRef = useRef<HTMLElement | null>(null);
 
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (!element) {
-      return;
+  const update = useCallback(() => {
+    if (elementRef.current) {
+      setWidth(elementRef.current.getBoundingClientRect().width);
     }
-    const update = () => setWidth(element.getBoundingClientRect().width);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    window.addEventListener("resize", update);
+  }, []);
+
+  const setRef = useCallback(
+    (node: HTMLElement | null) => {
+      elementRef.current = node;
+      if (externalRef) {
+        externalRef.current = node;
+      }
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+        observerRef.current = null;
+      }
+      if (node) {
+        update();
+        const observer = new ResizeObserver(update);
+        observer.observe(node);
+        observerRef.current = observer;
+        window.addEventListener("resize", update);
+      } else {
+        window.removeEventListener("resize", update);
+      }
+    },
+    [externalRef, update]
+  );
+
+  useEffect(() => {
     return () => {
-      observer.disconnect();
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+      }
       window.removeEventListener("resize", update);
     };
-  }, [ref]);
+  }, [update]);
 
-  return width;
+  return [setRef, width];
 }
 
 function moveStart(
