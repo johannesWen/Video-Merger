@@ -51,20 +51,28 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments }: ClipPrevie
   const fallbackDuration = item?.metadata?.duration;
   const sourceDuration = duration > 0 ? duration : fallbackDuration ?? 0;
 
-  useEffect(() => {
-    if (item) {
-      setCurrentTime(0);
-      setDuration(fallbackDuration && Number.isFinite(fallbackDuration) ? fallbackDuration : 0);
-      setIsPlaying(false);
-      setRespectTrimOnPlay(true);
-    }
-  }, [item, fallbackDuration]);
-
   const seededItemIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!item) {
+    if (item) {
+      setCurrentTime(0);
+      const fd = fallbackDuration && Number.isFinite(fallbackDuration) ? fallbackDuration : 0;
+      setDuration(fd);
+      setIsPlaying(false);
+      setRespectTrimOnPlay(true);
+      if (fd > 0) {
+        setLocalSegments(normalizeSegments(item.trimSegments, fd));
+        seededItemIdRef.current = item.id;
+      } else {
+        seededItemIdRef.current = null;
+      }
+    } else {
       seededItemIdRef.current = null;
+    }
+  }, [item, fallbackDuration]);
+
+  useEffect(() => {
+    if (!item) {
       return;
     }
     if (seededItemIdRef.current === item.id) {
