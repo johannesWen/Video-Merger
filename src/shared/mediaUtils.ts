@@ -1,4 +1,13 @@
 import type { ClipRotation, OutputSettings, VideoItem } from "./types";
+import { getDirectoryFromPath, getFilePath, joinPath, readFilePath } from "./sessionFile";
+
+export {
+  deriveStableClipId,
+  getDirectoryFromPath,
+  getFilePath,
+  joinPath,
+  readFilePath
+} from "./sessionFile";
 
 export const defaultOutputSettings: OutputSettings = {
   width: 1920,
@@ -89,7 +98,8 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
-export function createVideoItem(file: File): VideoItem {
+export function createVideoItem(file: File, path?: string): VideoItem {
+  const resolvedPath = path ?? getFilePath(file);
   return {
     id: createVideoId(file),
     file,
@@ -99,7 +109,8 @@ export function createVideoItem(file: File): VideoItem {
     mimeType: file.type || "video/mp4",
     createdAt: file.lastModified,
     status: "queued",
-    rotation: 0
+    rotation: 0,
+    ...(resolvedPath ? { path: resolvedPath } : {})
   };
 }
 

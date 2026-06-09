@@ -34,6 +34,7 @@ export interface VideoItem {
   error?: string;
   rotation: ClipRotation;
   trimSegments?: TrimSegment[];
+  path?: string;
 }
 
 export interface OutputSettings {
@@ -53,6 +54,31 @@ export interface MergeProgress {
 }
 
 export type MergeProgressCallback = (progress: MergeProgress) => void;
+
+export const SESSION_FILE_VERSION = 1 as const;
+export const SESSION_APP_NAME = "video-merger" as const;
+export const SESSION_FILE_EXTENSION = ".videomerge.json";
+export const SESSION_FILE_MIME = "application/json";
+
+export interface SessionClip {
+  id: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  createdAt: number;
+  path: string;
+  rotation: ClipRotation;
+  trimSegments?: TrimSegment[];
+}
+
+export interface SessionFile {
+  version: typeof SESSION_FILE_VERSION;
+  app: typeof SESSION_APP_NAME;
+  savedAt: number;
+  settings: OutputSettings;
+  processingMode: ProcessingMode;
+  clips: SessionClip[];
+}
 
 export interface ProcessingEngine {
   probe(file: File): Promise<VideoMetadata>;

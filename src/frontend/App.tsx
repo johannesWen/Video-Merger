@@ -18,10 +18,12 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   Download,
   FileVideo,
+  FolderOpen,
   GripVertical,
   Loader2,
   RotateCcw,
   RotateCw,
+  Save,
   Scissors,
   Server,
   Trash2,
@@ -32,20 +34,40 @@ import { type ChangeEvent, type DragEvent, useCallback, useEffect, useMemo, useR
 import { BackendFfmpegEngine, getBackendHealth } from "../processing/BackendFfmpegEngine";
 import { BrowserFfmpegEngine } from "../processing/BrowserFfmpegEngine";
 import { ClipPreviewModal } from "./ClipPreviewModal";
+import { MissingClipsDialog } from "./MissingClipsDialog";
 import {
   createVideoItem,
   cycleClipRotation,
   defaultOutputSettings,
+  deriveStableClipId,
   formatBytes,
   formatDate,
   formatDuration,
+  getDirectoryFromPath,
   isTransposed,
+  joinPath,
+  readFilePath,
   rotationDegrees,
   sortByCreationDate,
   validateVideoFiles
 } from "../shared/mediaUtils";
+import {
+  SessionValidationError,
+  parseSession,
+  sessionFileBlob,
+  serializeSession,
+  type PickedFile
+} from "../shared/sessionFile";
 import { effectiveDuration, isPristine, normalizeSegments } from "../shared/trimSegments";
-import type { AspectHandling, MergeProgress, OutputSettings, ProcessingMode, TrimSegment, VideoItem } from "../shared/types";
+import type {
+  AspectHandling,
+  MergeProgress,
+  OutputSettings,
+  ProcessingMode,
+  SessionClip,
+  TrimSegment,
+  VideoItem
+} from "../shared/types";
 
 type AppStatus = "idle" | "probing" | "ready" | "merging" | "complete" | "error";
 
@@ -66,8 +88,11 @@ export function App() {
   const browserEngine = useMemo(() => new BrowserFfmpegEngine(), []);
   const backendEngine = useMemo(() => new BackendFfmpegEngine(), []);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const sessionInputRef = useRef<HTMLInputElement | null>(null);
   const itemsRef = useRef<VideoItem[]>([]);
   const downloadUrlRef = useRef<string | null>(null);
+  const missingClipsRef = useRef<SessionClip[]>([]);
+  const sessionDirectoryRef = useRef<string | null>(null);
   const [items, setItems] = useState<VideoItem[]>([]);
   const [settings, setSettings] = useState<OutputSettings>(defaultOutputSettings);
   const [status, setStatus] = useState<AppStatus>("idle");
@@ -78,6 +103,8 @@ export function App() {
   const [backendAvailable, setBackendAvailable] = useState(false);
   const [backendMessage, setBackendMessage] = useState("Checking backend");
   const [previewingItem, setPreviewingItem] = useState<VideoItem | null>(null);
+  const [missingClips, setMissingClips] = useState<SessionClip[]>([]);
+  const [sessionDirectory, setSessionDirectory] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -95,6 +122,45 @@ export function App() {
   useEffect(() => {
     downloadUrlRef.current = downloadUrl;
   }, [downloadUrl]);
+
+  useEffect(() => {
+    missingClipsRef.current = missingClips;
+  }, [missingClips]);
+
+  useEffect(() => {
+    sessionDirectoryRef.current = sessionDirectory;
+  }, [sessionDirectory]);
+
+  useEffect(() => {
+    if (missingClips.length === 0 || items.length === 0) {
+      return;
+    }
+
+    const lookup = new Map(
+      missingClips.map((clip) => [deriveStableClipId(clip.name, clip.createdAt, clip.size), clip])
+    );
+
+    const matchedClipIds = new Set<string>();
+    const patchedItems = items.map((item) => {
+      const stableId = deriveStableClipId(item.name, item.createdAt, item.size);
+      const sessionClip = lookup.get(stableId);
+      if (!sessionClip) {
+        return item;
+      }
+      matchedClipIds.add(sessionClip.id);
+      if (item.rotation === sessionClip.rotation && sameSegments(item.trimSegments, sessionClip.trimSegments)) {
+        return item;
+      }
+      return { ...item, rotation: sessionClip.rotation, trimSegments: sessionClip.trimSegments };
+    });
+
+    if (matchedClipIds.size > 0) {
+      if (patchedItems !== items) {
+        setItems(patchedItems);
+      }
+      setMissingClips((current) => current.filter((clip) => !matchedClipIds.has(clip.id)));
+    }
+  }, [items, missingClips]);
 
   useEffect(() => {
     return () => {
@@ -143,21 +209,26 @@ export function App() {
   }, []);
 
   const ingestFiles = useCallback(
-    async (fileList: FileList | File[]) => {
-      const files = Array.from(fileList);
+    async (picked: PickedFile[]) => {
+      const files = picked.map((entry) => entry.file);
       const messages = validateVideoFiles(files);
-      const validFiles = files.filter((file) => messages.every((message) => !message.startsWith(file.name)));
+      const validNames = new Set(
+        files.filter((file) => messages.every((message) => !message.startsWith(file.name))).map((file) => file.name)
+      );
+      const validPicked = picked.filter((entry) => validNames.has(entry.file.name));
 
       setError(messages.length > 0 ? messages.join(" ") : null);
 
-      if (validFiles.length === 0) {
+      if (validPicked.length === 0) {
         return;
       }
 
       resetDownload();
       setStatus("probing");
 
-      const queuedItems = sortByCreationDate(validFiles.map(createVideoItem));
+      const queuedItems = sortByCreationDate(
+        validPicked.map((entry) => createVideoItem(entry.file, entry.path))
+      );
       setItems((currentItems) => sortByCreationDate([...currentItems, ...queuedItems]));
 
       await Promise.all(
@@ -203,16 +274,202 @@ export function App() {
     [browserEngine, resetDownload]
   );
 
+  const ingestFromLegacyList = useCallback(
+    (fileList: FileList | File[]) => {
+      const picked: PickedFile[] = Array.from(fileList).map((file) => {
+        const path = readFilePath(file);
+        return path ? { file, path } : { file };
+      });
+      return ingestFiles(picked);
+    },
+    [ingestFiles]
+  );
+
+  const handleAddFiles = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
-      void ingestFiles(event.target.files);
+      void ingestFromLegacyList(event.target.files);
       event.target.value = "";
     }
   };
 
+  const handleSaveSession = useCallback(() => {
+    if (items.length === 0) {
+      return;
+    }
+    const session = serializeSession(items, settings, processingMode);
+    const blob = sessionFileBlob(session);
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "video-merger-session.json";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  }, [items, settings, processingMode]);
+
+  const handleLoadSession = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) {
+        return;
+      }
+
+      const proceed = () => {
+        const reader = new FileReader();
+        reader.onerror = () => {
+          setError("Could not read the session file.");
+        };
+        reader.onload = () => {
+          void (async () => {
+            try {
+              const raw = typeof reader.result === "string" ? reader.result : "";
+              const session = parseSession(raw);
+
+              const jsonDirectory = getDirectoryFromPath(readFilePath(file) ?? "");
+
+              setSettings(session.settings);
+              setProcessingMode(session.processingMode);
+              setError(null);
+              resetDownload();
+
+              const clipsWithResolvedPaths = session.clips.map((clip) => {
+                const storedDirectory = getDirectoryFromPath(clip.path);
+                if (storedDirectory) {
+                  return clip;
+                }
+                if (!jsonDirectory) {
+                  return clip;
+                }
+                return { ...clip, path: joinPath(jsonDirectory, clip.name) };
+              });
+
+              setSessionDirectory(jsonDirectory ?? null);
+              setMissingClips(clipsWithResolvedPaths);
+            } catch (parseError) {
+              const message =
+                parseError instanceof SessionValidationError
+                  ? `Invalid session file: ${parseError.message}`
+                  : parseError instanceof Error
+                    ? parseError.message
+                    : "Could not parse the session file.";
+              setError(message);
+            }
+          })();
+        };
+        reader.readAsText(file);
+      };
+
+      if (itemsRef.current.length > 0) {
+        const confirmed = window.confirm("Replace current clips with this session? Unsaved changes will be lost.");
+        if (!confirmed) {
+          return;
+        }
+        handleClear();
+        setMissingClips([]);
+        setSessionDirectory(null);
+      }
+      proceed();
+    },
+    [resetDownload]
+  );
+
+  const resolvePickedFilePath = useCallback(
+    (file: File): string | undefined => {
+      const fromHandle = readFilePath(file);
+      if (fromHandle) {
+        return fromHandle;
+      }
+      const directory = sessionDirectoryRef.current;
+      if (directory) {
+        return joinPath(directory, file.name);
+      }
+      return undefined;
+    },
+    []
+  );
+
+  const handleRelocateMissing = useCallback(
+    async (clip: SessionClip, file: File) => {
+      if (file.name !== clip.name) {
+        setError(
+          `Selected file "${file.name}" does not match "${clip.name}". Expected at ${clip.path}.`
+        );
+        return;
+      }
+
+      const resolvedPath = resolvePickedFilePath(file) ?? clip.path;
+      await ingestFiles([{ file, path: resolvedPath }]);
+      setMissingClips((current) => current.filter((entry) => entry.id !== clip.id));
+    },
+    [ingestFiles, resolvePickedFilePath]
+  );
+
+  const handleRelocateBulk = useCallback(
+    async (files: File[]) => {
+      const stillMissing = missingClipsRef.current;
+      if (stillMissing.length === 0) {
+        return;
+      }
+
+      const consumedClips = new Set<string>();
+      const accepted: PickedFile[] = [];
+      const unmatched: string[] = [];
+
+      const claimClip = (file: File): SessionClip | undefined => {
+        const exact = stillMissing.find(
+          (entry) => !consumedClips.has(entry.id) && entry.name === file.name && entry.size === file.size
+        );
+        if (exact) {
+          consumedClips.add(exact.id);
+          return exact;
+        }
+        const byName = stillMissing.find((entry) => !consumedClips.has(entry.id) && entry.name === file.name);
+        if (byName) {
+          consumedClips.add(byName.id);
+          return byName;
+        }
+        return undefined;
+      };
+
+      for (const file of files) {
+        const clip = claimClip(file);
+        if (!clip) {
+          unmatched.push(file.name);
+          continue;
+        }
+        const resolvedPath = resolvePickedFilePath(file) ?? clip.path;
+        accepted.push({ file, path: resolvedPath });
+      }
+
+      if (accepted.length > 0) {
+        await ingestFiles(accepted);
+        setMissingClips((current) => current.filter((clip) => !consumedClips.has(clip.id)));
+      }
+
+      if (unmatched.length > 0) {
+        setError(
+          `These files did not match any missing clip: ${unmatched.join(", ")}. Make sure the names match the session.`
+        );
+      } else {
+        setError(null);
+      }
+    },
+    [ingestFiles, resolvePickedFilePath]
+  );
+
+  const handleDismissMissing = useCallback(() => {
+    setMissingClips([]);
+  }, []);
+
   const handleDrop = (event: DragEvent<HTMLElement>) => {
     event.preventDefault();
-    void ingestFiles(event.dataTransfer.files);
+    void ingestFromLegacyList(event.dataTransfer.files);
   };
 
   const handleRemove = (id: string) => {
@@ -348,24 +605,27 @@ export function App() {
           settings={settings}
           processingMode={processingMode}
           backendAvailable={backendAvailable}
+          onSaveSession={handleSaveSession}
+          onLoadSession={() => sessionInputRef.current?.click()}
           onProcessingModeChange={setProcessingMode}
           onChange={setSettings}
           disabled={status === "merging"}
+          canSave={items.length > 0}
         />
       </header>
 
       <section className="workspace">
         <section className="timeline-panel" onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
           {items.length === 0 ? (
-            <button className="dropzone" type="button" onClick={() => fileInputRef.current?.click()}>
+            <button className="dropzone" type="button" onClick={() => void handleAddFiles()}>
               <UploadCloud aria-hidden="true" size={34} />
               <span>Drop MP4 files</span>
-              <small>or choose from disk</small>
+              <small>or pick from disk</small>
             </button>
           ) : (
             <>
               <div className="timeline-toolbar">
-                <button className="secondary-button" type="button" onClick={() => fileInputRef.current?.click()}>
+                <button className="secondary-button" type="button" onClick={() => void handleAddFiles()}>
                   <UploadCloud aria-hidden="true" size={17} />
                   Add
                 </button>
@@ -387,6 +647,13 @@ export function App() {
           )}
 
           <input ref={fileInputRef} type="file" accept="video/mp4,.mp4" multiple hidden onChange={handleFileChange} />
+          <input
+            ref={sessionInputRef}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={handleLoadSession}
+          />
         </section>
 
         <aside className="merge-panel">
@@ -432,6 +699,13 @@ export function App() {
       onClose={() => setPreviewingItem(null)}
       onCommitSegments={handleCommitTrim}
     />
+
+    <MissingClipsDialog
+      missingClips={missingClips}
+      onCancel={handleDismissMissing}
+      onLocate={handleRelocateMissing}
+      onLocateBulk={handleRelocateBulk}
+    />
     </>
   );
 }
@@ -441,6 +715,9 @@ function OutputControls({
   processingMode,
   backendAvailable,
   disabled,
+  canSave,
+  onSaveSession,
+  onLoadSession,
   onProcessingModeChange,
   onChange
 }: {
@@ -448,6 +725,9 @@ function OutputControls({
   processingMode: ProcessingMode;
   backendAvailable: boolean;
   disabled: boolean;
+  canSave: boolean;
+  onSaveSession: () => void;
+  onLoadSession: () => void;
   onProcessingModeChange: (mode: ProcessingMode) => void;
   onChange: (settings: OutputSettings) => void;
 }) {
@@ -462,6 +742,28 @@ function OutputControls({
 
   return (
     <div className="output-controls">
+      <div className="session-controls">
+        <button
+          type="button"
+          className="secondary-button session-button"
+          onClick={onSaveSession}
+          disabled={disabled || !canSave}
+          title="Save current clips, settings and engine mode to a JSON file"
+        >
+          <Save aria-hidden="true" size={17} />
+          Save session
+        </button>
+        <button
+          type="button"
+          className="secondary-button session-button"
+          onClick={onLoadSession}
+          disabled={disabled}
+          title="Restore a session from a JSON file"
+        >
+          <FolderOpen aria-hidden="true" size={17} />
+          Load session
+        </button>
+      </div>
       <div className="segmented-control" aria-label="Output aspect ratio">
         {aspectPresets.map((preset) => (
           <button
@@ -759,4 +1061,24 @@ function getErrorMessage(error: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+function sameSegments(a: TrimSegment[] | undefined, b: TrimSegment[] | undefined): boolean {
+  if (!a && !b) {
+    return true;
+  }
+  if (!a || !b || a.length !== b.length) {
+    return false;
+  }
+  for (let index = 0; index < a.length; index += 1) {
+    const left = a[index];
+    const right = b[index];
+    if (!left || !right) {
+      return false;
+    }
+    if (left.start !== right.start || left.end !== right.end) {
+      return false;
+    }
+  }
+  return true;
 }

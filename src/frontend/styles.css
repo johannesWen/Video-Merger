@@ -838,3 +838,123 @@ p {
   min-height: 38px;
   padding: 0 16px;
 }
+
+.session-controls {
+  display: flex;
+  gap: 8px;
+  align-self: stretch;
+  align-items: end;
+  padding-right: 4px;
+  border-right: 1px solid #2f2e26;
+  margin-right: 4px;
+}
+
+.session-button {
+  min-height: 36px;
+  padding: 0 12px;
+  color: #fffdf5;
+  background: #282822;
+  border: 1px solid #575447;
+  border-radius: 6px;
+  font-size: 0.86rem;
+}
+
+.session-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.missing-dialog {
+  max-width: 560px;
+}
+
+.missing-dialog-help {
+  margin: 6px 0 14px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.missing-dialog-folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 14px;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: #fff7d8;
+  border: 1px solid #e2cf84;
+  border-radius: 8px;
+  font-size: 0.88rem;
+}
+
+.missing-dialog-folder code {
+  flex: 1;
+  min-width: 0;
+  font-family: "JetBrains Mono", "Fira Mono", ui-monospace, monospace;
+  font-size: 0.82rem;
+  color: var(--ink);
+  background: transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.missing-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.missing-dialog-actions .secondary-button {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 0.82rem;
+}
+
+.missing-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 18px;
+  padding: 0;
+  list-style: none;
+}
+
+.missing-row {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #faf8ec;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.missing-row-info {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.missing-row-info strong {
+  font-size: 0.92rem;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.missing-row-path {
+  font-family: "JetBrains Mono", "Fira Mono", ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.missing-row .secondary-button {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 0.82rem;
+}
