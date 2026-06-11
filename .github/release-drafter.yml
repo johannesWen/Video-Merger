@@ -1,0 +1,57 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+version-resolver:
+  major:
+    labels: ["breaking", "breaking change", "major"]
+  minor:
+    labels: ["feature", "enhancement", "minor"]
+  patch:
+    labels: ["bug", "bugfix", "fix", "patch", "docs", "chore", "refactor", "test", "build", "ci"]
+  default: patch
+categories:
+  - title: "🚀 Features"
+    labels:
+      - "feature"
+      - "enhancement"
+    collapse-after: 20
+  - title: "🐛 Bug Fixes"
+    labels:
+      - "bug"
+      - "bugfix"
+      - "fix"
+    collapse-after: 20
+  - title: "💥 Breaking Changes"
+    labels:
+      - "breaking"
+      - "breaking change"
+    collapse-after: 0
+  - title: "📚 Documentation"
+    labels:
+      - "docs"
+      - "documentation"
+    collapse-after: 10
+  - title: "🔧 Maintenance"
+    labels:
+      - "chore"
+      - "refactor"
+      - "test"
+      - "build"
+      - "ci"
+    collapse-after: 10
+  - title: "📦 Other Changes"
+    labels:
+      - "*"
+    collapse-after: 30
+change-template: "- $TITLE (#$NUMBER) @$AUTHOR"
+template: |
+  ## Changes
+
+  $CHANGES
+
+  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
+exclude-labels:
+  - "skip-changelog"
+  - "duplicate"
+  - "invalid"
+  - "question"
+  - "wontfix"
