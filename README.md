@@ -280,9 +280,7 @@ Key files:
 
 - [ ] Additional container formats (`.mov`, `.webm`)
 - [ ] GPU-accelerated encoding passthrough
-- [ ] Cloud storage export (S3, Google Drive)
 - [ ] Persistent projects (IndexedDB sessions)
-- [ ] Multi-track audio mixing
 - [ ] Plugin system for custom filters
 
 ---
