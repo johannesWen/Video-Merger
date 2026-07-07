@@ -1,4 +1,5 @@
 import type {
+  MergeExtras,
   MergePhase,
   MergeProgress,
   MergeProgressCallback,
@@ -34,7 +35,7 @@ export class BackendFfmpegEngine implements Pick<ProcessingEngine, "merge" | "ca
   private currentJobId: string | null = null;
   private currentEventSource: EventSource | null = null;
 
-  async merge(items: VideoItem[], settings: OutputSettings, onProgress: MergeProgressCallback): Promise<Blob> {
+  async merge(items: VideoItem[], settings: OutputSettings, onProgress: MergeProgressCallback, extras?: MergeExtras): Promise<Blob> {
     if (items.length === 0) {
       throw new Error("Add at least one MP4 before generating.");
     }
@@ -45,7 +46,31 @@ export class BackendFfmpegEngine implements Pick<ProcessingEngine, "merge" | "ca
     formData.set("settings", JSON.stringify(settings));
     formData.set("rotations", JSON.stringify(items.map((item) => item.rotation)));
     formData.set("trims", JSON.stringify(items.map((item) => item.trimSegments ?? null)));
+    formData.set(
+      "clipEffects",
+      JSON.stringify(
+        items.map((item) => ({
+          volume: item.volume,
+          muted: item.muted,
+          speed: item.speed,
+          fadeIn: item.fadeIn,
+          fadeOut: item.fadeOut,
+          colorAdjust: item.colorAdjust
+        }))
+      )
+    );
     items.forEach((item) => formData.append("videos", item.file, item.name));
+
+    if (extras?.watermark) {
+      formData.append("watermark", extras.watermark.file, extras.watermark.file.name);
+      formData.set("watermarkOpacity", String(extras.watermark.opacity));
+      formData.set("watermarkPosition", extras.watermark.position);
+      formData.set("watermarkScale", String(extras.watermark.scale));
+    }
+    if (extras?.backgroundMusic) {
+      formData.append("music", extras.backgroundMusic.file, extras.backgroundMusic.file.name);
+      formData.set("musicVolume", String(extras.backgroundMusic.volume));
+    }
 
     onProgress({
       phase: "normalizing",

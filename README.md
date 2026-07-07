@@ -59,16 +59,31 @@ A browser-first MP4 merger built with Vite, React, TypeScript, `@dnd-kit`, and `
 
 ## Features
 
-- **Drag & Drop Upload** – Add multiple `.mp4` files via picker, drop zone, or paste.
+- **Drag & Drop Upload** – Add multiple video files (`.mp4`, `.mov`, `.webm`, `.mkv`) via picker, drop zone, or paste.
 - **Smart Auto-Sort** – Clips are automatically ordered by file modification time.
 - **Clip Inspector** – See duration, resolution, aspect ratio, and audio stream info per clip.
 - **Sortable Timeline** – Reorder clips with mouse or keyboard via `@dnd-kit`.
 - **Trim Segments** – Cut in/out points on any clip before merging.
-- **Flexible Output** – Choose from common output aspect ratios (16:9, 9:16, 1:1, 4:3, etc.).
+- **Split Clip** – Split a clip into two independent clips at the playhead.
+- **Duplicate & Rename** – Duplicate any clip, or double-click its name to rename it.
+- **Undo / Redo** – Step back and forward through timeline edits (`Ctrl/Cmd+Z`, `Ctrl/Cmd+Shift+Z`).
+- **Per-Clip Volume & Mute** – Adjust or silence individual clips.
+- **Per-Clip Speed** – Slow down or speed up a clip from 0.5x–2x.
+- **Fade In / Out** – Add audio+video fades per clip.
+- **Color Adjustment** – Brightness, contrast, and saturation per clip.
+- **Watermark Overlay** – Burn in a logo image at any corner or center, with adjustable opacity.
+- **Background Music** – Mix in a looping music track under the merged audio.
+- **GIF Export** – Convert the merged result to an animated GIF.
+- **Flexible Output** – Choose from common output aspect ratios (16:9, 9:16, 1:1) plus ready-made social presets (Instagram Reel, TikTok, YouTube Shorts, Instagram Story, Square Post).
 - **Aspect Ratio Fit** – Mismatched source frames are placed over a blurred background to fill the canvas.
 - **Audio Normalization** – Clips without audio receive a silent AAC track so mixed projects merge cleanly.
 - **Hybrid Engine** – Falls back to native backend FFmpeg for larger projects; browser FFmpeg for everything else.
-- **100% Private** – Files are processed locally in the browser. Nothing is uploaded to a server.
+- **Autosave & Restore** – Project settings are autosaved locally; reload the app and restore/relink clips.
+- **Live ETA** – See an estimated time remaining while merging.
+- **Error Log Export** – Download a text log of everything that went wrong during a session.
+- **Keyboard Shortcuts Cheat Sheet** – Press `?` for a quick reference.
+- **Light & Dark Theme** – Toggle from the toolbar; respects your OS preference by default.
+- **100% Private** – Files are processed locally in the browser by default. Nothing is uploaded to a server unless you opt into backend mode.
 - **Modern UI** – React 18 + Lucide icons, accessible keyboard interactions.
 
 ---
@@ -170,6 +185,18 @@ ffprobe -version
 ---
 
 ## Getting Started
+
+### Quick start scripts
+
+Cross-platform launcher and build scripts are included so you don't need to remember npm commands:
+
+| Platform        | Start dev servers | Build for production |
+| --------------- | ------------------ | --------------------- |
+| Windows         | `start.bat`         | `build.bat`            |
+| macOS           | `start.command`     | `build.command`        |
+| Linux / macOS   | `./start.sh`        | `./build.sh`           |
+
+Each script checks for Node.js, runs `npm install` if `node_modules` is missing, and then starts the dev servers or produces a production build in `dist/`.
 
 Start both the frontend and backend dev servers in one command:
 

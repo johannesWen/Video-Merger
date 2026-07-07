@@ -3,6 +3,7 @@ import { fetchFile } from "@ffmpeg/util";
 import coreURL from "@ffmpeg/core?url";
 import wasmURL from "@ffmpeg/core/wasm?url";
 import type {
+  MergeExtras,
   MergeProgressCallback,
   OutputSettings,
   PreviewAsset,
@@ -10,12 +11,14 @@ import type {
   VideoItem,
   VideoMetadata
 } from "../shared/types";
+import { effectiveDuration } from "../shared/trimSegments";
 import { buildLabeledVideoFilter, buildVideoFilter } from "./ffmpegFilters";
 import {
   createRemuxSegmentsArgs,
   createSegmentArgs,
   getVideoBitrate
 } from "./ffmpegSegments";
+import { buildPostProcessArgs } from "./postProcess";
 
 export { createRemuxSegmentsArgs, createSegmentArgs, getVideoBitrate };
 
@@ -141,7 +144,12 @@ export class BrowserFfmpegEngine implements ProcessingEngine {
     });
   }
 
-  async merge(items: VideoItem[], settings: OutputSettings, onProgress: MergeProgressCallback): Promise<Blob> {
+  async merge(
+    items: VideoItem[],
+    settings: OutputSettings,
+    onProgress: MergeProgressCallback,
+    extras?: MergeExtras
+  ): Promise<Blob> {
     if (items.length === 0) {
       throw new Error("Add at least one MP4 before generating.");
     }
@@ -150,7 +158,11 @@ export class BrowserFfmpegEngine implements ProcessingEngine {
     const jobId = Date.now();
     const inputNames: string[] = [];
     const segmentNames: string[] = [];
-    const outputName = `merged-${jobId}.mp4`;
+    const needsPost = Boolean(extras?.watermark || extras?.backgroundMusic);
+    const remuxName = `remuxed-${jobId}.mp4`;
+    const outputName = needsPost ? `merged-${jobId}.mp4` : remuxName;
+    const watermarkName = `watermark-${jobId}`;
+    const musicName = `music-${jobId}`;
 
     onProgress({
       phase: "normalizing",
@@ -199,7 +211,47 @@ export class BrowserFfmpegEngine implements ProcessingEngine {
       });
 
       this.activeProgress = { itemIndex: items.length, itemCount: items.length + 1, onProgress };
-      await this.execWithContext(ffmpeg, createRemuxSegmentsArgs(segmentNames, outputName), "Could not write the merged MP4.");
+      await this.execWithContext(ffmpeg, createRemuxSegmentsArgs(segmentNames, remuxName), "Could not write the merged MP4.");
+
+      if (needsPost) {
+        onProgress({
+          phase: "concatenating",
+          completed: items.length,
+          total: items.length,
+          ratio: 1,
+          message: "Applying watermark / music"
+        });
+
+        if (extras?.watermark) {
+          await ffmpeg.writeFile(watermarkName, await fetchFile(extras.watermark.file));
+        }
+        if (extras?.backgroundMusic) {
+          await ffmpeg.writeFile(musicName, await fetchFile(extras.backgroundMusic.file));
+        }
+
+        const totalDurationSeconds = items.reduce((sum, item) => sum + Math.max(0.1, effectiveDuration(item)) / item.speed, 0);
+
+        await this.execWithContext(
+          ffmpeg,
+          buildPostProcessArgs(remuxName, outputName, {
+            watermark: extras?.watermark
+              ? {
+                  inputPath: watermarkName,
+                  opacity: extras.watermark.opacity,
+                  position: extras.watermark.position,
+                  scale: extras.watermark.scale
+                }
+              : undefined,
+            backgroundMusic: extras?.backgroundMusic
+              ? { inputPath: musicName, volume: extras.backgroundMusic.volume }
+              : undefined,
+            outputWidth: settings.width,
+            totalDurationSeconds
+          }),
+          "Could not apply watermark or background music."
+        );
+      }
+
       this.activeProgress = undefined;
 
       const output = await ffmpeg.readFile(outputName);
@@ -218,8 +270,35 @@ export class BrowserFfmpegEngine implements ProcessingEngine {
       await Promise.all([
         ...inputNames.map((name) => safeDelete(ffmpeg, name)),
         ...segmentNames.map((name) => safeDelete(ffmpeg, name)),
-        safeDelete(ffmpeg, outputName)
+        safeDelete(ffmpeg, remuxName),
+        safeDelete(ffmpeg, outputName),
+        safeDelete(ffmpeg, watermarkName),
+        safeDelete(ffmpeg, musicName)
       ]);
+    }
+  }
+
+  async convertToGif(source: Blob, fps = 10, width = 480): Promise<Blob> {
+    const ffmpeg = await this.ensureLoaded();
+    const jobId = Date.now();
+    const inputName = `gif-src-${jobId}.mp4`;
+    const paletteName = `gif-palette-${jobId}.png`;
+    const outputName = `gif-out-${jobId}.gif`;
+
+    try {
+      await ffmpeg.writeFile(inputName, await fetchFile(source));
+
+      const filter = `fps=${fps},scale=${width}:-1:flags=lanczos`;
+      await this.execWithContext(
+        ffmpeg,
+        ["-i", inputName, "-vf", `${filter},split[a][b];[a]palettegen[p];[b][p]paletteuse`, outputName],
+        "Could not generate GIF."
+      );
+
+      const output = await ffmpeg.readFile(outputName);
+      return new Blob([toBlobPart(output)], { type: "image/gif" });
+    } finally {
+      await Promise.all([safeDelete(ffmpeg, inputName), safeDelete(ffmpeg, paletteName), safeDelete(ffmpeg, outputName)]);
     }
   }
 

@@ -13,21 +13,28 @@ import {
   createRemuxSegmentsArgs,
   createSegmentArgs,
   formatFfmpegTime,
+  parseClipEffects,
   parseFfmpegProgressLine,
   parseProbeOutput,
   parseTrimSegments,
   progressRatio,
   type BackendClip
 } from "./ffmpegCommands";
+import { buildPostProcessArgs } from "../processing/postProcess";
 
 const port = Number(process.env.PORT ?? 5174);
 const upload = multer({
   dest: path.join(tmpdir(), "video-merger-uploads"),
   limits: {
-    files: 50,
+    files: 52,
     fileSize: 4 * 1024 * 1024 * 1024
   }
 });
+const uploadFields = upload.fields([
+  { name: "videos" },
+  { name: "watermark", maxCount: 1 },
+  { name: "music", maxCount: 1 }
+]);
 
 const app = express();
 
@@ -51,6 +58,7 @@ interface MergeJob {
   clips: BackendClip[];
   workDir: string;
   uploadedFiles: Express.Multer.File[];
+  remuxPath: string;
   outputPath: string;
   segmentPaths: string[];
   totalDuration: number;
@@ -61,6 +69,12 @@ interface MergeJob {
   listeners: Set<JobListener>;
   errorMessage?: string;
   completedAt?: number;
+  watermarkPath?: string;
+  musicPath?: string;
+  watermarkOpacity: number;
+  watermarkPosition: "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center";
+  watermarkScale: number;
+  musicVolume: number;
 }
 
 type JobListener = (event: JobEvent) => void;
@@ -86,29 +100,37 @@ app.get("/api/health", async (_request, response) => {
   });
 });
 
-app.post("/api/merge", upload.array("videos"), async (request, response) => {
-  const files = (request.files ?? []) as Express.Multer.File[];
+app.post("/api/merge", uploadFields, async (request, response) => {
+  const filesByField = (request.files ?? {}) as Record<string, Express.Multer.File[]>;
+  const files = filesByField.videos ?? [];
+  const watermarkFile = filesByField.watermark?.[0];
+  const musicFile = filesByField.music?.[0];
+  const allUploadedFiles = [...files, ...(watermarkFile ? [watermarkFile] : []), ...(musicFile ? [musicFile] : [])];
 
   if (files.length === 0) {
-    response.status(400).json({ error: "Upload at least one MP4 file." });
+    await cleanupFiles(allUploadedFiles);
+    response.status(400).json({ error: "Upload at least one video file." });
     return;
   }
 
   let settings: OutputSettings;
   let rotations: ClipRotation[];
   let trimSegmentsList: Array<ReturnType<typeof parseTrimSegments>[number]>;
+  let clipEffects: ReturnType<typeof parseClipEffects>;
   try {
     settings = parseSettings(request.body.settings);
     rotations = parseRotations(request.body.rotations, files.length);
     trimSegmentsList = parseTrimSegments(request.body.trims, files.length);
+    clipEffects = parseClipEffects(request.body.clipEffects, files.length);
   } catch (parseError) {
-    await cleanupFiles(files);
+    await cleanupFiles(allUploadedFiles);
     response.status(400).json({ error: getErrorMessage(parseError) });
     return;
   }
 
   const jobId = randomUUID();
   const workDir = await mkdtemp(path.join(tmpdir(), "video-merger-"));
+  const remuxPath = path.join(workDir, "remuxed-video.mp4");
   const outputPath = path.join(workDir, "merged-video.mp4");
 
   const clips: BackendClip[] = [];
@@ -119,17 +141,18 @@ app.post("/api/merge", upload.array("videos"), async (request, response) => {
         inputPath: file.path,
         metadata,
         rotation: rotations[index],
-        trimSegments: trimSegmentsList[index]
+        trimSegments: trimSegmentsList[index],
+        ...clipEffects[index]
       });
     } catch (probeError) {
-      await cleanup(files, workDir);
+      await cleanup(allUploadedFiles, workDir);
       response.status(500).json({ error: getErrorMessage(probeError) });
       return;
     }
   }
 
   const totalDuration = clips.reduce(
-    (sum, clip) => sum + Math.max(0.1, effectiveDuration(clip)),
+    (sum, clip) => sum + Math.max(0.1, effectiveDuration(clip)) / clip.speed,
     0
   );
   const segmentPaths = clips.map((_, index) => path.join(workDir, `segment-${index}.ts`));
@@ -140,7 +163,8 @@ app.post("/api/merge", upload.array("videos"), async (request, response) => {
     settings,
     clips,
     workDir,
-    uploadedFiles: files,
+    uploadedFiles: allUploadedFiles,
+    remuxPath,
     outputPath,
     segmentPaths,
     totalDuration,
@@ -148,7 +172,13 @@ app.post("/api/merge", upload.array("videos"), async (request, response) => {
     currentTimeUs: 0,
     phase: "encoding",
     ffmpegChild: null,
-    listeners: new Set()
+    listeners: new Set(),
+    watermarkPath: watermarkFile?.path,
+    musicPath: musicFile?.path,
+    watermarkOpacity: clampBody(request.body.watermarkOpacity, 0, 1, 0.8),
+    watermarkPosition: parseWatermarkPosition(request.body.watermarkPosition),
+    watermarkScale: clampBody(request.body.watermarkScale, 0.02, 0.6, 0.16),
+    musicVolume: clampBody(request.body.musicVolume, 0, 1, 0.5)
   };
   jobs.set(jobId, job);
 
@@ -379,7 +409,8 @@ async function runMergeJob(job: MergeJob): Promise<void> {
   emitJobEvent(job, { type: "status", status: job.status });
   emitJobEvent(job, { type: "progress", progress: buildProgressSnapshot(job) });
 
-  await runFfmpegWithProgress(createRemuxSegmentsArgs(job.segmentPaths, job.outputPath), {
+  const needsPost = Boolean(job.watermarkPath || job.musicPath);
+  await runFfmpegWithProgress(createRemuxSegmentsArgs(job.segmentPaths, needsPost ? job.remuxPath : job.outputPath), {
     onChild: (child) => {
       job.ffmpegChild = child;
     },
@@ -389,6 +420,33 @@ async function runMergeJob(job: MergeJob): Promise<void> {
     }
   });
   job.ffmpegChild = null;
+
+  if (needsPost) {
+    const args = buildPostProcessArgs(job.remuxPath, job.outputPath, {
+      watermark: job.watermarkPath
+        ? {
+            inputPath: job.watermarkPath,
+            opacity: job.watermarkOpacity,
+            position: job.watermarkPosition,
+            scale: job.watermarkScale
+          }
+        : undefined,
+      backgroundMusic: job.musicPath ? { inputPath: job.musicPath, volume: job.musicVolume } : undefined,
+      outputWidth: job.settings.width,
+      totalDurationSeconds: job.totalDuration
+    });
+
+    await runFfmpegWithProgress(args, {
+      onChild: (child) => {
+        job.ffmpegChild = child;
+      },
+      onProgress: (currentTimeUs) => {
+        job.currentTimeUs = currentTimeUs;
+        emitJobEvent(job, { type: "progress", progress: buildProgressSnapshot(job) });
+      }
+    });
+    job.ffmpegChild = null;
+  }
 
   job.status = "complete";
   job.completedAt = Date.now();
@@ -467,8 +525,29 @@ function makeVideoItemForFilter(clip: BackendClip) {
     status: "ready" as const,
     rotation: clip.rotation,
     metadata: clip.metadata,
-    trimSegments: clip.trimSegments
+    trimSegments: clip.trimSegments,
+    volume: clip.volume,
+    muted: clip.muted,
+    speed: clip.speed,
+    fadeIn: clip.fadeIn,
+    fadeOut: clip.fadeOut,
+    colorAdjust: clip.colorAdjust
   };
+}
+
+function clampBody(value: unknown, min: number, max: number, fallback: number): number {
+  const numeric = typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, numeric));
+}
+
+function parseWatermarkPosition(value: unknown): MergeJob["watermarkPosition"] {
+  const allowed: Array<MergeJob["watermarkPosition"]> = ["top-left", "top-right", "bottom-left", "bottom-right", "center"];
+  return typeof value === "string" && allowed.includes(value as MergeJob["watermarkPosition"])
+    ? (value as MergeJob["watermarkPosition"])
+    : "bottom-right";
 }
 
 function parseSettings(rawSettings: unknown): OutputSettings {
