@@ -1,4 +1,5 @@
-import type { ClipRotation, OutputSettings, VideoItem } from "./types";
+import type { ClipRotation, ColorAdjust, OutputSettings, VideoItem } from "./types";
+import { defaultColorAdjust } from "./types";
 import { getDirectoryFromPath, getFilePath, joinPath, readFilePath } from "./sessionFile";
 
 export {
@@ -22,21 +23,28 @@ export function createVideoId(file: File): string {
   return `${file.name}-${file.lastModified}-${file.size}-${randomPart}`;
 }
 
+const SUPPORTED_EXTENSIONS = [".mp4", ".mov", ".webm", ".mkv"];
+const SUPPORTED_MIME_TYPES = ["video/mp4", "video/quicktime", "video/webm", "video/x-matroska"];
+
 export function isMp4File(file: File): boolean {
-  return file.type === "video/mp4" || /\.mp4$/i.test(file.name);
+  return isSupportedVideoFile(file);
+}
+
+export function isSupportedVideoFile(file: File): boolean {
+  return SUPPORTED_MIME_TYPES.includes(file.type) || SUPPORTED_EXTENSIONS.some((ext) => file.name.toLowerCase().endsWith(ext));
 }
 
 export function validateVideoFiles(files: File[]): string[] {
   if (files.length === 0) {
-    return ["Choose at least one MP4 file."];
+    return ["Choose at least one video file."];
   }
 
-  const invalidFiles = files.filter((file) => !isMp4File(file));
+  const invalidFiles = files.filter((file) => !isSupportedVideoFile(file));
   if (invalidFiles.length === 0) {
     return [];
   }
 
-  return invalidFiles.map((file) => `${file.name} is not an MP4 file.`);
+  return invalidFiles.map((file) => `${file.name} is not a supported video file (mp4, mov, webm, mkv).`);
 }
 
 export function sortByCreationDate(items: VideoItem[]): VideoItem[] {
@@ -110,8 +118,48 @@ export function createVideoItem(file: File, path?: string): VideoItem {
     createdAt: file.lastModified,
     status: "queued",
     rotation: 0,
+    volume: 1,
+    muted: false,
+    speed: 1,
+    fadeIn: 0,
+    fadeOut: 0,
+    colorAdjust: { ...defaultColorAdjust },
     ...(resolvedPath ? { path: resolvedPath } : {})
   };
+}
+
+export function cloneVideoItem(item: VideoItem): VideoItem {
+  return {
+    ...item,
+    id: createVideoId(item.file),
+    objectUrl: URL.createObjectURL(item.file),
+    previewUrl: item.previewUrl,
+    colorAdjust: { ...item.colorAdjust }
+  };
+}
+
+export function clampVolume(value: number): number {
+  return Math.min(2, Math.max(0, value));
+}
+
+export function clampSpeed(value: number): number {
+  return Math.min(2, Math.max(0.5, value));
+}
+
+export function clampFade(value: number): number {
+  return Math.min(30, Math.max(0, value));
+}
+
+export function clampColorAdjust(adjust: Partial<ColorAdjust>): ColorAdjust {
+  return {
+    brightness: Math.min(1, Math.max(-1, adjust.brightness ?? 0)),
+    contrast: Math.min(3, Math.max(0, adjust.contrast ?? 1)),
+    saturation: Math.min(3, Math.max(0, adjust.saturation ?? 1))
+  };
+}
+
+export function hasColorAdjust(adjust: ColorAdjust): boolean {
+  return adjust.brightness !== 0 || adjust.contrast !== 1 || adjust.saturation !== 1;
 }
 
 export function cycleClipRotation(rotation: ClipRotation): ClipRotation {

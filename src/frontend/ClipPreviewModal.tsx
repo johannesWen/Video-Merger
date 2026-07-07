@@ -1,4 +1,4 @@
-import { Pause, Play, Scissors, X } from "lucide-react";
+import { Pause, Play, Scissors, SplitSquareHorizontal, X } from "lucide-react";
 import React, {
   useCallback,
   useEffect,
@@ -7,7 +7,7 @@ import React, {
   useState,
   type PointerEvent as ReactPointerEvent
 } from "react";
-import { formatDuration, isTransposed, rotationDegrees } from "../shared/mediaUtils";
+import { clampColorAdjust, clampFade, clampSpeed, clampVolume, formatDuration, isTransposed, rotationDegrees } from "../shared/mediaUtils";
 import {
   defaultSegments,
   findNextKeptStart,
@@ -19,14 +19,25 @@ import {
   splitAt,
   totalKeptDuration
 } from "../shared/trimSegments";
-import type { TrimSegment, VideoItem } from "../shared/types";
+import type { ColorAdjust, TrimSegment, VideoItem } from "../shared/types";
 
 const SCRUB_STEP_SECONDS = 5;
+
+export interface ClipEditResult {
+  trimSegments: TrimSegment[];
+  volume: number;
+  muted: boolean;
+  speed: number;
+  fadeIn: number;
+  fadeOut: number;
+  colorAdjust: ColorAdjust;
+}
 
 interface ClipPreviewModalProps {
   item: VideoItem | null;
   onClose: () => void;
-  onCommitSegments: (item: VideoItem, segments: TrimSegment[]) => void;
+  onCommitSegments: (item: VideoItem, result: ClipEditResult) => void;
+  onSplit: (item: VideoItem, atTime: number) => void;
 }
 
 type DragState = {
@@ -37,7 +48,7 @@ type DragState = {
 
 const TRACK_PADDING_PX = 8;
 
-export function ClipPreviewModal({ item, onClose, onCommitSegments }: ClipPreviewModalProps) {
+export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit }: ClipPreviewModalProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
@@ -47,6 +58,12 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments }: ClipPrevie
   const [localSegments, setLocalSegments] = useState<TrimSegment[]>([]);
   const [respectTrimOnPlay, setRespectTrimOnPlay] = useState(true);
   const [drag, setDrag] = useState<DragState>(null);
+  const [volume, setVolume] = useState(1);
+  const [muted, setMuted] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const [fadeIn, setFadeIn] = useState(0);
+  const [fadeOut, setFadeOut] = useState(0);
+  const [colorAdjust, setColorAdjust] = useState<ColorAdjust>({ brightness: 0, contrast: 1, saturation: 1 });
 
   const fallbackDuration = item?.metadata?.duration;
   const sourceDuration = duration > 0 ? duration : fallbackDuration ?? 0;
@@ -60,6 +77,12 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments }: ClipPrevie
       setDuration(fd);
       setIsPlaying(false);
       setRespectTrimOnPlay(true);
+      setVolume(item.volume);
+      setMuted(item.muted);
+      setSpeed(item.speed);
+      setFadeIn(item.fadeIn);
+      setFadeOut(item.fadeOut);
+      setColorAdjust(item.colorAdjust);
       if (fd > 0) {
         setLocalSegments(normalizeSegments(item.trimSegments, fd));
         seededItemIdRef.current = item.id;
@@ -331,9 +354,25 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments }: ClipPrevie
     if (!item) {
       return;
     }
-    onCommitSegments(item, localSegments);
+    onCommitSegments(item, {
+      trimSegments: localSegments,
+      volume: clampVolume(volume),
+      muted,
+      speed: clampSpeed(speed),
+      fadeIn: clampFade(fadeIn),
+      fadeOut: clampFade(fadeOut),
+      colorAdjust: clampColorAdjust(colorAdjust)
+    });
     onClose();
-  }, [item, localSegments, onClose, onCommitSegments]);
+  }, [colorAdjust, fadeIn, fadeOut, item, localSegments, muted, onClose, onCommitSegments, speed, volume]);
+
+  const handleSplitHere = useCallback(() => {
+    if (!item || currentTime <= 0 || currentTime >= sourceDuration) {
+      return;
+    }
+    onSplit(item, currentTime);
+    onClose();
+  }, [currentTime, item, onClose, onSplit, sourceDuration]);
 
   const pristine = isPristine(localSegments, sourceDuration);
   const keptDuration = totalKeptDuration(localSegments);
@@ -460,6 +499,16 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments }: ClipPrevie
           <button
             type="button"
             className="secondary-button"
+            onClick={handleSplitHere}
+            disabled={sourceDuration <= 0 || currentTime <= 0 || currentTime >= sourceDuration}
+            title="Split into two separate clips at the playhead"
+          >
+            <SplitSquareHorizontal aria-hidden="true" size={16} />
+            Split clip
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
             onClick={handleReset}
             disabled={pristine || sourceDuration <= 0}
           >
@@ -472,6 +521,91 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments }: ClipPrevie
               onChange={(event) => setRespectTrimOnPlay(event.target.checked)}
             />
             <span>Skip cuts while playing</span>
+          </label>
+        </div>
+
+        <div className="effects-panel">
+          <label className="effects-field">
+            <span>Volume {Math.round(volume * 100)}%</span>
+            <input
+              type="range"
+              min={0}
+              max={2}
+              step={0.05}
+              value={volume}
+              disabled={muted}
+              onChange={(event) => setVolume(Number(event.target.value))}
+            />
+          </label>
+          <label className="effects-toggle">
+            <input type="checkbox" checked={muted} onChange={(event) => setMuted(event.target.checked)} />
+            <span>Mute</span>
+          </label>
+          <label className="effects-field">
+            <span>Speed {speed.toFixed(2)}x</span>
+            <input
+              type="range"
+              min={0.5}
+              max={2}
+              step={0.05}
+              value={speed}
+              onChange={(event) => setSpeed(Number(event.target.value))}
+            />
+          </label>
+          <label className="effects-field">
+            <span>Fade in {fadeIn.toFixed(1)}s</span>
+            <input
+              type="range"
+              min={0}
+              max={5}
+              step={0.1}
+              value={fadeIn}
+              onChange={(event) => setFadeIn(Number(event.target.value))}
+            />
+          </label>
+          <label className="effects-field">
+            <span>Fade out {fadeOut.toFixed(1)}s</span>
+            <input
+              type="range"
+              min={0}
+              max={5}
+              step={0.1}
+              value={fadeOut}
+              onChange={(event) => setFadeOut(Number(event.target.value))}
+            />
+          </label>
+          <label className="effects-field">
+            <span>Brightness {colorAdjust.brightness.toFixed(2)}</span>
+            <input
+              type="range"
+              min={-1}
+              max={1}
+              step={0.05}
+              value={colorAdjust.brightness}
+              onChange={(event) => setColorAdjust({ ...colorAdjust, brightness: Number(event.target.value) })}
+            />
+          </label>
+          <label className="effects-field">
+            <span>Contrast {colorAdjust.contrast.toFixed(2)}</span>
+            <input
+              type="range"
+              min={0}
+              max={2}
+              step={0.05}
+              value={colorAdjust.contrast}
+              onChange={(event) => setColorAdjust({ ...colorAdjust, contrast: Number(event.target.value) })}
+            />
+          </label>
+          <label className="effects-field">
+            <span>Saturation {colorAdjust.saturation.toFixed(2)}</span>
+            <input
+              type="range"
+              min={0}
+              max={2}
+              step={0.05}
+              value={colorAdjust.saturation}
+              onChange={(event) => setColorAdjust({ ...colorAdjust, saturation: Number(event.target.value) })}
+            />
           </label>
         </div>
 

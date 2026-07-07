@@ -1,4 +1,5 @@
-import type { ClipRotation, OutputSettings, TrimSegment, VideoMetadata } from "../shared/types";
+import type { ClipRotation, ColorAdjust, OutputSettings, TrimSegment, VideoMetadata } from "../shared/types";
+import { defaultColorAdjust } from "../shared/types";
 import {
   buildIndexedAudioFilter,
   createRemuxSegmentsArgs,
@@ -11,6 +12,73 @@ export interface BackendClip {
   metadata: VideoMetadata;
   rotation: ClipRotation;
   trimSegments?: TrimSegment[];
+  volume: number;
+  muted: boolean;
+  speed: number;
+  fadeIn: number;
+  fadeOut: number;
+  colorAdjust: ColorAdjust;
+}
+
+export interface ClipEffects {
+  volume: number;
+  muted: boolean;
+  speed: number;
+  fadeIn: number;
+  fadeOut: number;
+  colorAdjust: ColorAdjust;
+}
+
+export function parseClipEffects(rawEffects: unknown, length: number): ClipEffects[] {
+  const fallback = (): ClipEffects[] =>
+    Array.from({ length }, () => ({
+      volume: 1,
+      muted: false,
+      speed: 1,
+      fadeIn: 0,
+      fadeOut: 0,
+      colorAdjust: { ...defaultColorAdjust }
+    }));
+
+  if (typeof rawEffects !== "string" || length === 0) {
+    return fallback();
+  }
+
+  try {
+    const parsed = JSON.parse(rawEffects) as unknown;
+    if (!Array.isArray(parsed) || parsed.length !== length) {
+      return fallback();
+    }
+    return parsed.map((value) => normalizeClipEffects(value));
+  } catch {
+    return fallback();
+  }
+}
+
+function normalizeClipEffects(value: unknown): ClipEffects {
+  const entry = (value && typeof value === "object" ? value : {}) as Partial<ClipEffects>;
+  const colorAdjustRaw = (entry.colorAdjust ?? {}) as Partial<ColorAdjust>;
+
+  return {
+    volume: clampNumber(entry.volume, 0, 2, 1),
+    muted: entry.muted === true,
+    speed: clampNumber(entry.speed, 0.5, 2, 1),
+    fadeIn: clampNumber(entry.fadeIn, 0, 30, 0),
+    fadeOut: clampNumber(entry.fadeOut, 0, 30, 0),
+    colorAdjust: {
+      brightness: clampNumber(colorAdjustRaw.brightness, -1, 1, 0),
+      contrast: clampNumber(colorAdjustRaw.contrast, 0, 3, 1),
+      saturation: clampNumber(colorAdjustRaw.saturation, 0, 3, 1)
+    }
+  };
+}
+
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, numeric));
 }
 
 export { buildIndexedAudioFilter, createRemuxSegmentsArgs, createSegmentArgs, getVideoBitrate };

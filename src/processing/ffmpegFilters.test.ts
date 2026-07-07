@@ -16,8 +16,8 @@ describe("ffmpeg filters", () => {
     const filter = buildVideoFilter(defaultOutputSettings);
 
     expect(filter).toContain("[0:v]split=2");
-    expect(filter).toContain("scale=1280:720:force_original_aspect_ratio=increase");
-    expect(filter).toContain("crop=1280:720");
+    expect(filter).toContain("scale=1920:1080:force_original_aspect_ratio=increase");
+    expect(filter).toContain("crop=1920:1080");
     expect(filter).toContain("boxblur=24:2");
     expect(filter).toContain("overlay=(W-w)/2:(H-h)/2");
     expect(filter).toContain("format=yuv420p[v]");
@@ -95,7 +95,7 @@ describe("ffmpeg filters", () => {
     expect(args).toContain("mpegts");
     expect(args).toContain("h264_mp4toannexb");
     expect(args).toContain("+resend_headers");
-    expect(args).toContain("2800k");
+    expect(args).toContain("4500k");
     expect(args[args.indexOf("-filter_complex") + 1]).toContain("fps=30");
     expect(args.at(-1)).toBe("segment.ts");
   });
@@ -115,7 +115,8 @@ describe("ffmpeg filters", () => {
     const filter = args[args.indexOf("-filter_complex") + 1];
 
     expect(filter).toContain("[0:v]trim=start=1.500:end=4.000,setpts=PTS-STARTPTS[vcraw]");
-    expect(filter).toContain("[0:a]atrim=start=1.500:end=4.000,asetpts=PTS-STARTPTS[ac]");
+    expect(filter).toContain("[0:a]atrim=start=1.500:end=4.000,asetpts=PTS-STARTPTS[acraw]");
+    expect(filter).toContain("[acraw]volume=1.000[ac]");
     expect(filter).toContain("boxblur=24:2");
   });
 
@@ -136,7 +137,7 @@ describe("ffmpeg filters", () => {
     expect(filter).toContain("[v0][v1]concat=n=2:v=1:a=0[vcraw]");
     expect(filter).toContain("[0:a]asplit=2[a0src][a1src]");
     expect(filter).toContain("[a0src]atrim=start=0.000:end=2.000,asetpts=PTS-STARTPTS[a0]");
-    expect(filter).toContain("[a0][a1]concat=n=2:v=0:a=1[ac]");
+    expect(filter).toContain("[a0][a1]concat=n=2:v=0:a=1[acraw]");
     expect(filter).toContain("boxblur=24:2");
     expect(args[args.indexOf("-map", args.indexOf("[v]") + 1) + 1]).toBe("[ac]");
   });
@@ -194,6 +195,12 @@ function makeItem(hasAudio: boolean, overrides: Partial<VideoItem> = {}): VideoI
     createdAt: 1,
     status: "ready",
     rotation: 0,
+    volume: 1,
+    muted: false,
+    speed: 1,
+    fadeIn: 0,
+    fadeOut: 0,
+    colorAdjust: { brightness: 0, contrast: 1, saturation: 1 },
     metadata: {
       duration: 4,
       width: 1280,
@@ -204,3 +211,42 @@ function makeItem(hasAudio: boolean, overrides: Partial<VideoItem> = {}): VideoI
     ...overrides
   };
 }
+
+describe("per-clip effects", () => {
+  it("applies volume and mute to the audio chain", () => {
+    const item = makeItem(true, { volume: 0.5 });
+    const args = createSegmentArgs("input.mp4", "segment.ts", item, defaultOutputSettings);
+    const filter = args[args.indexOf("-filter_complex") + 1];
+    expect(filter).toContain("volume=0.500");
+
+    const muted = makeItem(true, { muted: true });
+    const mutedArgs = createSegmentArgs("input.mp4", "segment.ts", muted, defaultOutputSettings);
+    const mutedFilter = mutedArgs[mutedArgs.indexOf("-filter_complex") + 1];
+    expect(mutedFilter).toContain("volume=0.000");
+  });
+
+  it("applies speed to both video (setpts) and audio (atempo)", () => {
+    const item = makeItem(true, { speed: 1.5 });
+    const args = createSegmentArgs("input.mp4", "segment.ts", item, defaultOutputSettings);
+    const filter = args[args.indexOf("-filter_complex") + 1];
+    expect(filter).toContain("setpts=PTS/1.500");
+    expect(filter).toContain("atempo=1.500");
+  });
+
+  it("applies fade in/out to video and audio", () => {
+    const item = makeItem(true, { fadeIn: 1, fadeOut: 1 });
+    const args = createSegmentArgs("input.mp4", "segment.ts", item, defaultOutputSettings);
+    const filter = args[args.indexOf("-filter_complex") + 1];
+    expect(filter).toContain("fade=t=in:st=0:d=1.000");
+    expect(filter).toContain("fade=t=out:st=3.000:d=1.000");
+    expect(filter).toContain("afade=t=in:st=0:d=1.000");
+    expect(filter).toContain("afade=t=out:st=3.000:d=1.000");
+  });
+
+  it("applies brightness/contrast/saturation via the eq filter", () => {
+    const item = makeItem(true, { colorAdjust: { brightness: 0.2, contrast: 1.1, saturation: 0.8 } });
+    const args = createSegmentArgs("input.mp4", "segment.ts", item, defaultOutputSettings);
+    const filter = args[args.indexOf("-filter_complex") + 1];
+    expect(filter).toContain("eq=brightness=0.200:contrast=1.100:saturation=0.800");
+  });
+});

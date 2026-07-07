@@ -31,6 +31,12 @@ function makeItem(overrides: Partial<VideoItem> = {}): VideoItem {
     createdAt: file.lastModified,
     status: "ready",
     rotation: 0,
+    volume: 1,
+    muted: false,
+    speed: 1,
+    fadeIn: 0,
+    fadeOut: 0,
+    colorAdjust: { brightness: 0, contrast: 1, saturation: 1 },
     ...overrides
   };
 }

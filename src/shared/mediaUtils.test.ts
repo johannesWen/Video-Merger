@@ -26,14 +26,16 @@ describe("media utilities", () => {
     expect(items).toEqual(["a", "b", "c", "d"]);
   });
 
-  it("validates MP4 files and rejects other formats", () => {
+  it("validates supported video files and rejects other formats", () => {
     const mp4 = new File(["video"], "clip.mp4", { type: "video/mp4" });
     const mov = new File(["video"], "clip.mov", { type: "video/quicktime" });
+    const txt = new File(["text"], "clip.txt", { type: "text/plain" });
 
     expect(isMp4File(mp4)).toBe(true);
     expect(validateVideoFiles([mp4])).toEqual([]);
-    expect(validateVideoFiles([mov])).toEqual(["clip.mov is not an MP4 file."]);
-    expect(validateVideoFiles([])).toEqual(["Choose at least one MP4 file."]);
+    expect(validateVideoFiles([mov])).toEqual([]);
+    expect(validateVideoFiles([txt])).toEqual(["clip.txt is not a supported video file (mp4, mov, webm, mkv)."]);
+    expect(validateVideoFiles([])).toEqual(["Choose at least one video file."]);
   });
 
   it("keeps landscape MP4 defaults", () => {
@@ -56,7 +58,14 @@ function makeItem(name: string, createdAt: number): VideoItem {
     size: 5,
     mimeType: "video/mp4",
     createdAt,
-    status: "ready"
+    status: "ready",
+    rotation: 0,
+    volume: 1,
+    muted: false,
+    speed: 1,
+    fadeIn: 0,
+    fadeOut: 0,
+    colorAdjust: { brightness: 0, contrast: 1, saturation: 1 }
   };
 }
 

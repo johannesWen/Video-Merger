@@ -2,6 +2,14 @@ export type AspectHandling = "fit-blur" | "center-crop" | "letterbox";
 export type MergePhase = "idle" | "probing" | "normalizing" | "concatenating" | "complete" | "error";
 export type ProcessingMode = "auto" | "backend" | "browser";
 export type ClipRotation = 0 | 1 | 2 | 3;
+export type Theme = "light" | "dark";
+export type WatermarkPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center";
+
+export interface ColorAdjust {
+  brightness: number;
+  contrast: number;
+  saturation: number;
+}
 
 export interface VideoMetadata {
   duration: number;
@@ -35,6 +43,31 @@ export interface VideoItem {
   rotation: ClipRotation;
   trimSegments?: TrimSegment[];
   path?: string;
+  volume: number;
+  muted: boolean;
+  speed: number;
+  fadeIn: number;
+  fadeOut: number;
+  colorAdjust: ColorAdjust;
+}
+
+export const defaultColorAdjust: ColorAdjust = { brightness: 0, contrast: 1, saturation: 1 };
+
+export interface WatermarkSettings {
+  file: File;
+  opacity: number;
+  position: WatermarkPosition;
+  scale: number;
+}
+
+export interface BackgroundMusicSettings {
+  file: File;
+  volume: number;
+}
+
+export interface MergeExtras {
+  watermark?: WatermarkSettings;
+  backgroundMusic?: BackgroundMusicSettings;
 }
 
 export interface OutputSettings {
@@ -83,6 +116,11 @@ export interface SessionFile {
 export interface ProcessingEngine {
   probe(file: File): Promise<VideoMetadata>;
   createPreview(file: File): Promise<PreviewAsset>;
-  merge(items: VideoItem[], settings: OutputSettings, onProgress: MergeProgressCallback): Promise<Blob>;
+  merge(
+    items: VideoItem[],
+    settings: OutputSettings,
+    onProgress: MergeProgressCallback,
+    extras?: MergeExtras
+  ): Promise<Blob>;
   cancel(): void;
 }
