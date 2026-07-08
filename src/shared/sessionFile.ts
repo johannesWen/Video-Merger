@@ -207,12 +207,21 @@ function validateSettings(value: unknown): OutputSettings {
     throw new SessionValidationError(`Session settings.aspectHandling is invalid: ${aspectHandling}`);
   }
 
+  const fpsRaw = Number(value.fps);
+  const qualityRaw = Number(value.quality);
+  const masterVolumeRaw = Number(value.masterVolume);
+
   return {
     width,
     height,
     aspectLabel,
     aspectHandling: aspectHandling as OutputSettings["aspectHandling"],
-    format: "mp4"
+    format: "mp4",
+    fps: [24, 25, 30, 60].includes(fpsRaw) ? fpsRaw : 30,
+    quality: Number.isFinite(qualityRaw) ? Math.min(100, Math.max(20, qualityRaw)) : 60,
+    masterVolume: Number.isFinite(masterVolumeRaw) ? Math.min(2, Math.max(0, masterVolumeRaw)) : 1,
+    outputName:
+      typeof value.outputName === "string" && value.outputName.trim().length > 0 ? value.outputName : "merged-video"
   };
 }
 

@@ -7,17 +7,13 @@ import {
   getVideoBitrate
 } from "../processing/ffmpegSegments";
 
-export interface BackendClip {
+export interface BackendClip extends ClipEffects {
   inputPath: string;
   metadata: VideoMetadata;
   rotation: ClipRotation;
   trimSegments?: TrimSegment[];
-  volume: number;
-  muted: boolean;
-  speed: number;
-  fadeIn: number;
-  fadeOut: number;
-  colorAdjust: ColorAdjust;
+  /** Absolute path to a pre-rendered text-overlay PNG uploaded by the client. */
+  overlayPath?: string;
 }
 
 export interface ClipEffects {
@@ -27,6 +23,9 @@ export interface ClipEffects {
   fadeIn: number;
   fadeOut: number;
   colorAdjust: ColorAdjust;
+  reversed: boolean;
+  freezeFrame: number;
+  crossfadeAfter: number;
 }
 
 export function parseClipEffects(rawEffects: unknown, length: number): ClipEffects[] {
@@ -37,7 +36,10 @@ export function parseClipEffects(rawEffects: unknown, length: number): ClipEffec
       speed: 1,
       fadeIn: 0,
       fadeOut: 0,
-      colorAdjust: { ...defaultColorAdjust }
+      colorAdjust: { ...defaultColorAdjust },
+      reversed: false,
+      freezeFrame: 0,
+      crossfadeAfter: 0
     }));
 
   if (typeof rawEffects !== "string" || length === 0) {
@@ -65,6 +67,9 @@ function normalizeClipEffects(value: unknown): ClipEffects {
     speed: clampNumber(entry.speed, 0.5, 2, 1),
     fadeIn: clampNumber(entry.fadeIn, 0, 30, 0),
     fadeOut: clampNumber(entry.fadeOut, 0, 30, 0),
+    reversed: entry.reversed === true,
+    freezeFrame: clampNumber(entry.freezeFrame, 0, 30, 0),
+    crossfadeAfter: clampNumber(entry.crossfadeAfter, 0, 5, 0),
     colorAdjust: {
       brightness: clampNumber(colorAdjustRaw.brightness, -1, 1, 0),
       contrast: clampNumber(colorAdjustRaw.contrast, 0, 3, 1),

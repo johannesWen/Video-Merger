@@ -2,8 +2,27 @@ export type AspectHandling = "fit-blur" | "center-crop" | "letterbox";
 export type MergePhase = "idle" | "probing" | "normalizing" | "concatenating" | "complete" | "error";
 export type ProcessingMode = "auto" | "backend" | "browser";
 export type ClipRotation = 0 | 1 | 2 | 3;
-export type Theme = "light" | "dark";
+export type Theme = "light" | "dark" | "high-contrast";
 export type WatermarkPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center";
+
+export type TextOverlayPosition = "top" | "center" | "bottom";
+
+export interface TextOverlay {
+  text: string;
+  position: TextOverlayPosition;
+  fontSize: number;
+  color: string;
+}
+
+export interface ClipEffectsPreset {
+  name: string;
+  volume: number;
+  muted: boolean;
+  speed: number;
+  fadeIn: number;
+  fadeOut: number;
+  colorAdjust: ColorAdjust;
+}
 
 export interface ColorAdjust {
   brightness: number;
@@ -49,6 +68,26 @@ export interface VideoItem {
   fadeIn: number;
   fadeOut: number;
   colorAdjust: ColorAdjust;
+  /** Reverse playback of video+audio (ffmpeg reverse/areverse). */
+  reversed?: boolean;
+  /** Hold the last frame for this many seconds. */
+  freezeFrame?: number;
+  /** Burned-in text overlay. */
+  textOverlay?: TextOverlay;
+  /** Crossfade duration (seconds) into the NEXT clip. 0/undefined = hard cut. */
+  crossfadeAfter?: number;
+  /** Prevents remove/rotate/edit until unlocked. Organizational. */
+  locked?: boolean;
+  /** Color tag (CSS color) for organization. */
+  tagColor?: string;
+  /** Optional short text tag. */
+  tagText?: string;
+  /** Free-text note. Organizational only. */
+  note?: string;
+  /** Chapter/marker label shown before this clip in the list. */
+  markerLabel?: string;
+  /** Low-res audio waveform peaks (0..1), for card visualization. */
+  waveform?: number[];
 }
 
 export const defaultColorAdjust: ColorAdjust = { brightness: 0, contrast: 1, saturation: 1 };
@@ -76,6 +115,14 @@ export interface OutputSettings {
   aspectLabel: string;
   aspectHandling: AspectHandling;
   format: "mp4";
+  /** Output frame rate. */
+  fps: number;
+  /** Quality percent (20-100). Scales the target bitrate. */
+  quality: number;
+  /** Master output volume multiplier (0-2) applied to every clip's audio. */
+  masterVolume: number;
+  /** Base name (no extension) for downloaded merge/GIF results. */
+  outputName: string;
 }
 
 export interface MergeProgress {

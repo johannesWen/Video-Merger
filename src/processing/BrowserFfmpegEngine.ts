@@ -14,10 +14,14 @@ import type {
 import { effectiveDuration } from "../shared/trimSegments";
 import { buildLabeledVideoFilter, buildVideoFilter } from "./ffmpegFilters";
 import {
+  createCrossfadeConcatArgs,
   createRemuxSegmentsArgs,
   createSegmentArgs,
-  getVideoBitrate
+  getVideoBitrate,
+  segmentOutputDuration,
+  type CrossfadeSegment
 } from "./ffmpegSegments";
+import { renderTextOverlayPng } from "../frontend/canvasUtils";
 import { buildPostProcessArgs } from "./postProcess";
 
 export { createRemuxSegmentsArgs, createSegmentArgs, getVideoBitrate };
@@ -180,6 +184,15 @@ export class BrowserFfmpegEngine implements ProcessingEngine {
         segmentNames.push(segmentName);
 
         await ffmpeg.writeFile(inputName, await fetchFile(item.file));
+
+        let overlayName: string | undefined;
+        if (item.textOverlay && item.textOverlay.text.trim().length > 0) {
+          overlayName = `overlay-${jobId}-${index}.png`;
+          const overlayBlob = await renderTextOverlayPng(item.textOverlay, settings.width, settings.height);
+          await ffmpeg.writeFile(overlayName, await fetchFile(overlayBlob));
+          inputNames.push(overlayName);
+        }
+
         this.activeProgress = { itemIndex: index, itemCount: items.length + 1, onProgress };
 
         onProgress({
@@ -190,8 +203,15 @@ export class BrowserFfmpegEngine implements ProcessingEngine {
           message: `Encoding ${item.name}`
         });
 
-        await this.execWithContext(ffmpeg, createSegmentArgs(inputName, segmentName, item, settings), `Could not encode ${item.name}.`);
+        await this.execWithContext(
+          ffmpeg,
+          createSegmentArgs(inputName, segmentName, item, settings, { textOverlayPath: overlayName }),
+          `Could not encode ${item.name}.`
+        );
         await safeDelete(ffmpeg, inputName);
+        if (overlayName) {
+          await safeDelete(ffmpeg, overlayName);
+        }
 
         onProgress({
           phase: "normalizing",
@@ -211,7 +231,22 @@ export class BrowserFfmpegEngine implements ProcessingEngine {
       });
 
       this.activeProgress = { itemIndex: items.length, itemCount: items.length + 1, onProgress };
-      await this.execWithContext(ffmpeg, createRemuxSegmentsArgs(segmentNames, remuxName), "Could not write the merged MP4.");
+      const hasCrossfades =
+        items.length > 1 && items.slice(0, -1).some((item) => (item.crossfadeAfter ?? 0) > 0.01);
+      if (hasCrossfades) {
+        const crossfadeSegments: CrossfadeSegment[] = items.map((item, index) => ({
+          path: segmentNames[index],
+          duration: segmentOutputDuration(item),
+          crossfadeAfter: item.crossfadeAfter ?? 0
+        }));
+        await this.execWithContext(
+          ffmpeg,
+          createCrossfadeConcatArgs(crossfadeSegments, remuxName, settings),
+          "Could not write the merged MP4 with crossfades."
+        );
+      } else {
+        await this.execWithContext(ffmpeg, createRemuxSegmentsArgs(segmentNames, remuxName), "Could not write the merged MP4.");
+      }
 
       if (needsPost) {
         onProgress({

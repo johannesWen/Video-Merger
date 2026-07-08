@@ -55,11 +55,27 @@ export class BackendFfmpegEngine implements Pick<ProcessingEngine, "merge" | "ca
           speed: item.speed,
           fadeIn: item.fadeIn,
           fadeOut: item.fadeOut,
-          colorAdjust: item.colorAdjust
+          colorAdjust: item.colorAdjust,
+          reversed: item.reversed === true,
+          freezeFrame: item.freezeFrame ?? 0,
+          crossfadeAfter: item.crossfadeAfter ?? 0
         }))
       )
     );
     items.forEach((item) => formData.append("videos", item.file, item.name));
+
+    // Text overlays are rendered to transparent PNGs in the browser so the native
+    // ffmpeg pass burns in the exact same text rendering as the wasm engine.
+    const overlayIndexes: number[] = [];
+    for (const [index, item] of items.entries()) {
+      if (item.textOverlay && item.textOverlay.text.trim().length > 0) {
+        const { renderTextOverlayPng } = await import("../frontend/canvasUtils");
+        const png = await renderTextOverlayPng(item.textOverlay, settings.width, settings.height);
+        formData.append("overlays", png, `overlay-${index}.png`);
+        overlayIndexes.push(index);
+      }
+    }
+    formData.set("overlayIndexes", JSON.stringify(overlayIndexes));
 
     if (extras?.watermark) {
       formData.append("watermark", extras.watermark.file, extras.watermark.file.name);

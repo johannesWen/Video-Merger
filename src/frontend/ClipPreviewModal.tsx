@@ -7,7 +7,16 @@ import React, {
   useState,
   type PointerEvent as ReactPointerEvent
 } from "react";
-import { clampColorAdjust, clampFade, clampSpeed, clampVolume, formatDuration, isTransposed, rotationDegrees } from "../shared/mediaUtils";
+import {
+  clampColorAdjust,
+  clampFade,
+  clampFreeze,
+  clampSpeed,
+  clampVolume,
+  formatDuration,
+  isTransposed,
+  rotationDegrees
+} from "../shared/mediaUtils";
 import {
   defaultSegments,
   findNextKeptStart,
@@ -19,9 +28,10 @@ import {
   splitAt,
   totalKeptDuration
 } from "../shared/trimSegments";
-import type { ColorAdjust, TrimSegment, VideoItem } from "../shared/types";
+import type { ClipEffectsPreset, ColorAdjust, TextOverlay, TextOverlayPosition, TrimSegment, VideoItem } from "../shared/types";
 
 const SCRUB_STEP_SECONDS = 5;
+const PRESETS_STORAGE_KEY = "video-merger-effect-presets";
 
 export interface ClipEditResult {
   trimSegments: TrimSegment[];
@@ -31,6 +41,27 @@ export interface ClipEditResult {
   fadeIn: number;
   fadeOut: number;
   colorAdjust: ColorAdjust;
+  reversed: boolean;
+  freezeFrame: number;
+  textOverlay?: TextOverlay;
+  note?: string;
+}
+
+export function loadEffectPresets(): ClipEffectsPreset[] {
+  try {
+    const raw = window.localStorage.getItem(PRESETS_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed.filter((entry) => entry && typeof entry === "object" && typeof (entry as ClipEffectsPreset).name === "string") as ClipEffectsPreset[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveEffectPresets(presets: ClipEffectsPreset[]): void {
+  window.localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(presets.slice(0, 24)));
 }
 
 interface ClipPreviewModalProps {
@@ -38,6 +69,7 @@ interface ClipPreviewModalProps {
   onClose: () => void;
   onCommitSegments: (item: VideoItem, result: ClipEditResult) => void;
   onSplit: (item: VideoItem, atTime: number) => void;
+  onRegeneratePoster?: (item: VideoItem, atTime: number) => void;
 }
 
 type DragState = {
@@ -48,7 +80,7 @@ type DragState = {
 
 const TRACK_PADDING_PX = 8;
 
-export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit }: ClipPreviewModalProps) {
+export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit, onRegeneratePoster }: ClipPreviewModalProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
@@ -64,6 +96,17 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit }: C
   const [fadeIn, setFadeIn] = useState(0);
   const [fadeOut, setFadeOut] = useState(0);
   const [colorAdjust, setColorAdjust] = useState<ColorAdjust>({ brightness: 0, contrast: 1, saturation: 1 });
+  const [reversed, setReversed] = useState(false);
+  const [freezeFrame, setFreezeFrame] = useState(0);
+  const [overlayText, setOverlayText] = useState("");
+  const [overlayPosition, setOverlayPosition] = useState<TextOverlayPosition>("bottom");
+  const [overlayFontSize, setOverlayFontSize] = useState(48);
+  const [overlayColor, setOverlayColor] = useState("#ffffff");
+  const [note, setNote] = useState("");
+  const [snapToSecond, setSnapToSecond] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [showSafeZones, setShowSafeZones] = useState(false);
+  const [presets, setPresets] = useState<ClipEffectsPreset[]>(() => loadEffectPresets());
 
   const fallbackDuration = item?.metadata?.duration;
   const sourceDuration = duration > 0 ? duration : fallbackDuration ?? 0;
@@ -83,6 +126,14 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit }: C
       setFadeIn(item.fadeIn);
       setFadeOut(item.fadeOut);
       setColorAdjust(item.colorAdjust);
+      setReversed(item.reversed === true);
+      setFreezeFrame(item.freezeFrame ?? 0);
+      setOverlayText(item.textOverlay?.text ?? "");
+      setOverlayPosition(item.textOverlay?.position ?? "bottom");
+      setOverlayFontSize(item.textOverlay?.fontSize ?? 48);
+      setOverlayColor(item.textOverlay?.color ?? "#ffffff");
+      setNote(item.note ?? "");
+      setZoom(1);
       if (fd > 0) {
         setLocalSegments(normalizeSegments(item.trimSegments, fd));
         seededItemIdRef.current = item.id;
@@ -242,11 +293,11 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit }: C
         return 0;
       }
       const rect = track.getBoundingClientRect();
-      const innerWidth = Math.max(1, rect.width - TRACK_PADDING_PX * 2);
-      const relative = Math.min(Math.max(0, clientX - rect.left - TRACK_PADDING_PX), innerWidth);
+      const innerWidth = Math.max(1, (rect.width - TRACK_PADDING_PX * 2) * zoom);
+      const relative = Math.min(Math.max(0, clientX - rect.left + track.scrollLeft - TRACK_PADDING_PX), innerWidth);
       return (relative / innerWidth) * sourceDuration;
     },
-    [sourceDuration]
+    [sourceDuration, zoom]
   );
 
   const handleSegmentEdgePointerDown = useCallback(
@@ -269,7 +320,8 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit }: C
       if (event.pointerId !== drag.pointerId) {
         return;
       }
-      const time = pointerToTime(event.clientX);
+      const rawTime = pointerToTime(event.clientX);
+      const time = snapToSecond ? Math.min(sourceDuration, Math.max(0, Math.round(rawTime))) : rawTime;
       setLocalSegments((current) => {
         if (drag.edge === "start") {
           return moveStart(current, drag.segmentIndex, time, sourceDuration);
@@ -293,7 +345,25 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit }: C
       window.removeEventListener("pointerup", handleUp);
       window.removeEventListener("pointercancel", handleUp);
     };
-  }, [drag, pointerToTime, sourceDuration]);
+  }, [drag, pointerToTime, snapToSecond, sourceDuration]);
+
+  // Fine trim nudging with arrow keys while a trim handle has keyboard focus.
+  const handleNudgeEdge = useCallback(
+    (segmentIndex: number, edge: "start" | "end", delta: number) => {
+      const step = snapToSecond ? Math.sign(delta) * 1 : delta;
+      setLocalSegments((current) => {
+        const segment = current[segmentIndex];
+        if (!segment) {
+          return current;
+        }
+        if (edge === "start") {
+          return moveStart(current, segmentIndex, segment.start + step, sourceDuration);
+        }
+        return moveEnd(current, segmentIndex, segment.end + step, sourceDuration);
+      });
+    },
+    [snapToSecond, sourceDuration]
+  );
 
   useEffect(() => {
     if (!respectTrimOnPlay || !isPlaying || localSegments.length === 0 || sourceDuration <= 0) {
@@ -354,6 +424,7 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit }: C
     if (!item) {
       return;
     }
+    const trimmedText = overlayText.trim();
     onCommitSegments(item, {
       trimSegments: localSegments,
       volume: clampVolume(volume),
@@ -361,10 +432,67 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit }: C
       speed: clampSpeed(speed),
       fadeIn: clampFade(fadeIn),
       fadeOut: clampFade(fadeOut),
-      colorAdjust: clampColorAdjust(colorAdjust)
+      colorAdjust: clampColorAdjust(colorAdjust),
+      reversed,
+      freezeFrame: clampFreeze(freezeFrame),
+      textOverlay:
+        trimmedText.length > 0
+          ? {
+              text: trimmedText.slice(0, 200),
+              position: overlayPosition,
+              fontSize: Math.min(200, Math.max(10, overlayFontSize)),
+              color: overlayColor
+            }
+          : undefined,
+      note: note.trim().length > 0 ? note.trim() : undefined
     });
     onClose();
-  }, [colorAdjust, fadeIn, fadeOut, item, localSegments, muted, onClose, onCommitSegments, speed, volume]);
+  }, [colorAdjust, fadeIn, fadeOut, freezeFrame, item, localSegments, muted, note, onClose, onCommitSegments, overlayColor, overlayFontSize, overlayPosition, overlayText, reversed, speed, volume]);
+
+  const handleSavePreset = useCallback(() => {
+    const name = window.prompt("Preset name?");
+    if (!name || name.trim().length === 0) {
+      return;
+    }
+    const preset: ClipEffectsPreset = {
+      name: name.trim().slice(0, 40),
+      volume: clampVolume(volume),
+      muted,
+      speed: clampSpeed(speed),
+      fadeIn: clampFade(fadeIn),
+      fadeOut: clampFade(fadeOut),
+      colorAdjust: clampColorAdjust(colorAdjust)
+    };
+    setPresets((current) => {
+      const next = [...current.filter((entry) => entry.name !== preset.name), preset];
+      saveEffectPresets(next);
+      return next;
+    });
+  }, [colorAdjust, fadeIn, fadeOut, muted, speed, volume]);
+
+  const handleApplyPreset = useCallback(
+    (name: string) => {
+      const preset = presets.find((entry) => entry.name === name);
+      if (!preset) {
+        return;
+      }
+      setVolume(preset.volume);
+      setMuted(preset.muted);
+      setSpeed(preset.speed);
+      setFadeIn(preset.fadeIn);
+      setFadeOut(preset.fadeOut);
+      setColorAdjust({ ...preset.colorAdjust });
+    },
+    [presets]
+  );
+
+  const handleDeletePreset = useCallback((name: string) => {
+    setPresets((current) => {
+      const next = current.filter((entry) => entry.name !== name);
+      saveEffectPresets(next);
+      return next;
+    });
+  }, []);
 
   const handleSplitHere = useCallback(() => {
     if (!item || currentTime <= 0 || currentTime >= sourceDuration) {
@@ -424,20 +552,30 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit }: C
           {item.name}
         </h2>
 
-        <video
-          key={item.id}
-          ref={videoRef}
-          className="preview-modal-video"
-          src={item.objectUrl}
-          playsInline
-          preload="metadata"
-          onLoadedMetadata={handleLoadedMetadata}
-          onTimeUpdate={handleTimeUpdate}
-          onPlay={handlePlay}
-          onPause={handlePause}
-          onEnded={handleEnded}
-          style={videoStyle}
-        />
+        <div className="preview-video-stage">
+          <video
+            key={item.id}
+            ref={videoRef}
+            className="preview-modal-video"
+            src={item.objectUrl}
+            playsInline
+            preload="metadata"
+            onLoadedMetadata={handleLoadedMetadata}
+            onTimeUpdate={handleTimeUpdate}
+            onPlay={handlePlay}
+            onPause={handlePause}
+            onEnded={handleEnded}
+            style={videoStyle}
+          />
+          {showSafeZones && (
+            <div className="safe-zone-overlay" aria-hidden="true">
+              <div className="safe-zone safe-zone-action" title="Action safe (90%)" />
+              <div className="safe-zone safe-zone-title" title="Title safe (80%)" />
+              <div className="safe-zone-center-v" />
+              <div className="safe-zone-center-h" />
+            </div>
+          )}
+        </div>
 
         <div className="preview-modal-controls">
           <button
@@ -477,6 +615,8 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit }: C
           pointerToTime={pointerToTime}
           onEdgePointerDown={handleSegmentEdgePointerDown}
           onRemoveSegment={handleRemoveSegment}
+          zoom={zoom}
+          onNudgeEdge={handleNudgeEdge}
         />
 
         <div className="trim-summary">
@@ -522,6 +662,45 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit }: C
             />
             <span>Skip cuts while playing</span>
           </label>
+          <label className="trim-toggle">
+            <input
+              type="checkbox"
+              checked={snapToSecond}
+              onChange={(event) => setSnapToSecond(event.target.checked)}
+            />
+            <span>Snap to seconds</span>
+          </label>
+          <label className="trim-toggle">
+            <input
+              type="checkbox"
+              checked={showSafeZones}
+              onChange={(event) => setShowSafeZones(event.target.checked)}
+            />
+            <span>Safe zones</span>
+          </label>
+          <label className="trim-zoom">
+            <span>Zoom {zoom}x</span>
+            <input
+              type="range"
+              min={1}
+              max={8}
+              step={1}
+              value={zoom}
+              onChange={(event) => setZoom(Number(event.target.value))}
+              aria-label="Trim timeline zoom"
+            />
+          </label>
+          {onRegeneratePoster && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => onRegeneratePoster(item, currentTime)}
+              disabled={sourceDuration <= 0}
+              title="Use the current frame as this clip's thumbnail"
+            >
+              Set thumbnail
+            </button>
+          )}
         </div>
 
         <div className="effects-panel">
@@ -607,6 +786,123 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit }: C
               onChange={(event) => setColorAdjust({ ...colorAdjust, saturation: Number(event.target.value) })}
             />
           </label>
+          <label className="effects-toggle">
+            <input type="checkbox" checked={reversed} onChange={(event) => setReversed(event.target.checked)} />
+            <span>Reverse playback</span>
+          </label>
+          <label className="effects-field">
+            <span>Freeze last frame {freezeFrame.toFixed(1)}s</span>
+            <input
+              type="range"
+              min={0}
+              max={10}
+              step={0.5}
+              value={freezeFrame}
+              onChange={(event) => setFreezeFrame(Number(event.target.value))}
+            />
+          </label>
+        </div>
+
+        <div className="overlay-panel">
+          <label className="overlay-field overlay-field-text">
+            <span>Title text (burned in)</span>
+            <input
+              type="text"
+              value={overlayText}
+              maxLength={200}
+              placeholder="Leave empty for no overlay"
+              onChange={(event) => setOverlayText(event.target.value)}
+            />
+          </label>
+          <label className="overlay-field">
+            <span>Position</span>
+            <select
+              value={overlayPosition}
+              onChange={(event) => setOverlayPosition(event.target.value as TextOverlayPosition)}
+            >
+              <option value="top">Top</option>
+              <option value="center">Center</option>
+              <option value="bottom">Bottom</option>
+            </select>
+          </label>
+          <label className="overlay-field">
+            <span>Size</span>
+            <input
+              type="number"
+              min={10}
+              max={200}
+              value={overlayFontSize}
+              onChange={(event) => setOverlayFontSize(Number(event.target.value))}
+              aria-label="Overlay font size"
+            />
+          </label>
+          <label className="overlay-field">
+            <span>Color</span>
+            <input
+              type="color"
+              value={overlayColor}
+              onChange={(event) => setOverlayColor(event.target.value)}
+              aria-label="Overlay text color"
+            />
+          </label>
+        </div>
+
+        <div className="preset-panel">
+          <button type="button" className="secondary-button" onClick={handleSavePreset}>
+            Save effects preset
+          </button>
+          {presets.length > 0 && (
+            <>
+              <label className="overlay-field">
+                <span>Apply preset</span>
+                <select
+                  value=""
+                  onChange={(event) => {
+                    if (event.target.value) {
+                      handleApplyPreset(event.target.value);
+                    }
+                  }}
+                  aria-label="Apply saved effects preset"
+                >
+                  <option value="">Choose…</option>
+                  {presets.map((preset) => (
+                    <option key={preset.name} value={preset.name}>
+                      {preset.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="overlay-field">
+                <span>Delete preset</span>
+                <select
+                  value=""
+                  onChange={(event) => {
+                    if (event.target.value) {
+                      handleDeletePreset(event.target.value);
+                    }
+                  }}
+                  aria-label="Delete saved effects preset"
+                >
+                  <option value="">Choose…</option>
+                  {presets.map((preset) => (
+                    <option key={preset.name} value={preset.name}>
+                      {preset.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
+          <label className="overlay-field overlay-field-text">
+            <span>Notes</span>
+            <input
+              type="text"
+              value={note}
+              maxLength={500}
+              placeholder="Private note about this clip"
+              onChange={(event) => setNote(event.target.value)}
+            />
+          </label>
         </div>
 
         <div className="trim-footer">
@@ -636,7 +932,9 @@ function TrimEditor({
   trackWidth,
   pointerToTime,
   onEdgePointerDown,
-  onRemoveSegment
+  onRemoveSegment,
+  zoom = 1,
+  onNudgeEdge
 }: {
   sourceDuration: number;
   segments: TrimSegment[];
@@ -651,8 +949,29 @@ function TrimEditor({
     edge: "start" | "end"
   ) => void;
   onRemoveSegment: (index: number) => void;
+  zoom?: number;
+  onNudgeEdge?: (segmentIndex: number, edge: "start" | "end", delta: number) => void;
 }) {
-  const innerWidth = Math.max(0, trackWidth - TRACK_PADDING_PX * 2);
+  const innerWidth = Math.max(0, (trackWidth - TRACK_PADDING_PX * 2) * zoom);
+
+  const handleEdgeKeyDown = (
+    event: React.KeyboardEvent<HTMLDivElement>,
+    segmentIndex: number,
+    edge: "start" | "end"
+  ) => {
+    if (!onNudgeEdge) {
+      return;
+    }
+    if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+      event.preventDefault();
+      event.stopPropagation();
+      onNudgeEdge(segmentIndex, edge, event.shiftKey ? -1 : -0.1);
+    } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      onNudgeEdge(segmentIndex, edge, event.shiftKey ? 1 : 0.1);
+    }
+  };
   const xForTime = useCallback(
     (time: number) => {
       if (sourceDuration <= 0) {
@@ -716,6 +1035,7 @@ function TrimEditor({
                   <div
                     className="trim-handle trim-handle-start"
                     onPointerDown={(event) => onEdgePointerDown(event, index, "start")}
+                    onKeyDown={(event) => handleEdgeKeyDown(event, index, "start")}
                     role="slider"
                     aria-label="Trim start"
                     aria-valuemin={0}
@@ -727,6 +1047,7 @@ function TrimEditor({
                 <div
                   className="trim-handle trim-handle-end"
                   onPointerDown={(event) => onEdgePointerDown(event, index, "end")}
+                  onKeyDown={(event) => handleEdgeKeyDown(event, index, "end")}
                   role="slider"
                   aria-label={index === segments.length - 1 ? "Trim end" : "Cut"}
                   aria-valuemin={segment.start}

@@ -9,6 +9,8 @@ import express from "express";
 import multer from "multer";
 import type { ClipRotation, OutputSettings } from "../shared/types";
 import { effectiveDuration } from "../shared/trimSegments";
+import { normalizeOutputSettings } from "../shared/mediaUtils";
+import { createCrossfadeConcatArgs, segmentOutputDuration, type CrossfadeSegment } from "../processing/ffmpegSegments";
 import {
   createRemuxSegmentsArgs,
   createSegmentArgs,
@@ -33,7 +35,8 @@ const upload = multer({
 const uploadFields = upload.fields([
   { name: "videos" },
   { name: "watermark", maxCount: 1 },
-  { name: "music", maxCount: 1 }
+  { name: "music", maxCount: 1 },
+  { name: "overlays" }
 ]);
 
 const app = express();
@@ -105,7 +108,13 @@ app.post("/api/merge", uploadFields, async (request, response) => {
   const files = filesByField.videos ?? [];
   const watermarkFile = filesByField.watermark?.[0];
   const musicFile = filesByField.music?.[0];
-  const allUploadedFiles = [...files, ...(watermarkFile ? [watermarkFile] : []), ...(musicFile ? [musicFile] : [])];
+  const overlayFiles = filesByField.overlays ?? [];
+  const allUploadedFiles = [
+    ...files,
+    ...(watermarkFile ? [watermarkFile] : []),
+    ...(musicFile ? [musicFile] : []),
+    ...overlayFiles
+  ];
 
   if (files.length === 0) {
     await cleanupFiles(allUploadedFiles);
@@ -133,6 +142,8 @@ app.post("/api/merge", uploadFields, async (request, response) => {
   const remuxPath = path.join(workDir, "remuxed-video.mp4");
   const outputPath = path.join(workDir, "merged-video.mp4");
 
+  const overlayByClipIndex = mapOverlayFiles(request.body.overlayIndexes, overlayFiles);
+
   const clips: BackendClip[] = [];
   for (const [index, file] of files.entries()) {
     try {
@@ -142,6 +153,7 @@ app.post("/api/merge", uploadFields, async (request, response) => {
         metadata,
         rotation: rotations[index],
         trimSegments: trimSegmentsList[index],
+        overlayPath: overlayByClipIndex.get(index),
         ...clipEffects[index]
       });
     } catch (probeError) {
@@ -151,10 +163,13 @@ app.post("/api/merge", uploadFields, async (request, response) => {
     }
   }
 
-  const totalDuration = clips.reduce(
-    (sum, clip) => sum + Math.max(0.1, effectiveDuration(clip)) / clip.speed,
-    0
-  );
+  const totalDuration = clips.reduce((sum, clip, index) => {
+    let clipDuration = Math.max(0.1, effectiveDuration(clip)) / clip.speed + clip.freezeFrame;
+    if (index < clips.length - 1) {
+      clipDuration -= Math.max(0, Math.min(clip.crossfadeAfter, 5));
+    }
+    return sum + clipDuration;
+  }, 0);
   const segmentPaths = clips.map((_, index) => path.join(workDir, `segment-${index}.ts`));
 
   const job: MergeJob = {
@@ -389,7 +404,9 @@ async function runMergeJob(job: MergeJob): Promise<void> {
     emitJobEvent(job, { type: "progress", progress: buildProgressSnapshot(job) });
 
     const item = makeVideoItemForFilter(clip);
-    const args = createSegmentArgs(clip.inputPath, segmentPath, item, job.settings);
+    const args = createSegmentArgs(clip.inputPath, segmentPath, item, job.settings, {
+      textOverlayPath: clip.overlayPath
+    });
 
     await runFfmpegWithProgress(args, {
       onChild: (child) => {
@@ -410,7 +427,19 @@ async function runMergeJob(job: MergeJob): Promise<void> {
   emitJobEvent(job, { type: "progress", progress: buildProgressSnapshot(job) });
 
   const needsPost = Boolean(job.watermarkPath || job.musicPath);
-  await runFfmpegWithProgress(createRemuxSegmentsArgs(job.segmentPaths, needsPost ? job.remuxPath : job.outputPath), {
+  const hasCrossfades = job.clips.length > 1 && job.clips.slice(0, -1).some((clip) => clip.crossfadeAfter > 0.01);
+  const muxArgs = hasCrossfades
+    ? createCrossfadeConcatArgs(
+        job.clips.map((clip, index): CrossfadeSegment => ({
+          path: job.segmentPaths[index],
+          duration: segmentOutputDuration(makeVideoItemForFilter(clip)),
+          crossfadeAfter: clip.crossfadeAfter
+        })),
+        needsPost ? job.remuxPath : job.outputPath,
+        job.settings
+      )
+    : createRemuxSegmentsArgs(job.segmentPaths, needsPost ? job.remuxPath : job.outputPath);
+  await runFfmpegWithProgress(muxArgs, {
     onChild: (child) => {
       job.ffmpegChild = child;
     },
@@ -531,8 +560,34 @@ function makeVideoItemForFilter(clip: BackendClip) {
     speed: clip.speed,
     fadeIn: clip.fadeIn,
     fadeOut: clip.fadeOut,
-    colorAdjust: clip.colorAdjust
+    colorAdjust: clip.colorAdjust,
+    reversed: clip.reversed,
+    freezeFrame: clip.freezeFrame,
+    crossfadeAfter: clip.crossfadeAfter
   };
+}
+
+function mapOverlayFiles(rawIndexes: unknown, overlayFiles: Express.Multer.File[]): Map<number, string> {
+  const result = new Map<number, string>();
+  if (typeof rawIndexes !== "string" || overlayFiles.length === 0) {
+    return result;
+  }
+  try {
+    const parsed = JSON.parse(rawIndexes) as unknown;
+    if (!Array.isArray(parsed)) {
+      return result;
+    }
+    parsed.forEach((value, position) => {
+      const clipIndex = Number(value);
+      const file = overlayFiles[position];
+      if (Number.isInteger(clipIndex) && clipIndex >= 0 && file) {
+        result.set(clipIndex, file.path);
+      }
+    });
+  } catch {
+    // Ignore malformed overlay metadata; clips simply render without overlays.
+  }
+  return result;
 }
 
 function clampBody(value: unknown, min: number, max: number, fallback: number): number {
@@ -560,7 +615,7 @@ function parseSettings(rawSettings: unknown): OutputSettings {
     throw new Error("Invalid output settings.");
   }
 
-  return settings;
+  return normalizeOutputSettings(settings);
 }
 
 function parseRotations(rawRotations: unknown, length: number): ClipRotation[] {

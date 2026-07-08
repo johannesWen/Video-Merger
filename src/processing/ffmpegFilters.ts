@@ -11,6 +11,7 @@ export function buildLabeledVideoFilter(
   rotation: ClipRotation = 0
 ): string {
   const { width, height, aspectHandling } = settings;
+  const fps = Number.isFinite(settings.fps) && settings.fps > 0 ? settings.fps : 30;
   const labelBase = outputLabel.replace(/[[\]]/g, "") || "video";
   const baseLabel = `[${labelBase}base]`;
   const foregroundSourceLabel = `[${labelBase}fgsrc]`;
@@ -23,12 +24,12 @@ export function buildLabeledVideoFilter(
       `${rotationPrefix}split=2${baseLabel}${foregroundSourceLabel}`,
       `${baseLabel}scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=24:2${backgroundLabel}`,
       `${foregroundSourceLabel}scale=${width}:${height}:force_original_aspect_ratio=decrease${foregroundLabel}`,
-      `${backgroundLabel}${foregroundLabel}overlay=(W-w)/2:(H-h)/2,fps=30,setpts=PTS-STARTPTS,setsar=1,format=yuv420p${outputLabel}`
+      `${backgroundLabel}${foregroundLabel}overlay=(W-w)/2:(H-h)/2,fps=${fps},setpts=PTS-STARTPTS,setsar=1,format=yuv420p${outputLabel}`
     ].join(";"),
     "center-crop": [
       `${rotationPrefix}scale=${width}:${height}:force_original_aspect_ratio=increase`,
       `crop=${width}:${height}`,
-      "fps=30",
+      `fps=${fps}`,
       "setpts=PTS-STARTPTS",
       "setsar=1",
       `format=yuv420p${outputLabel}`
@@ -36,7 +37,7 @@ export function buildLabeledVideoFilter(
     letterbox: [
       `${rotationPrefix}scale=${width}:${height}:force_original_aspect_ratio=decrease`,
       `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black`,
-      "fps=30",
+      `fps=${fps}`,
       "setpts=PTS-STARTPTS",
       "setsar=1",
       `format=yuv420p${outputLabel}`
