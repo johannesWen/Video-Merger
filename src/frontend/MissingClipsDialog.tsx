@@ -1,5 +1,8 @@
-import { FileSearch, FileVideo, Folder, X } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { closestCenter, DndContext, type DragEndEvent, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { FileSearch, FileVideo, Folder, GripVertical, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getDirectoryFromPath } from "../shared/mediaUtils";
 import type { SessionClip } from "../shared/types";
 
@@ -14,6 +17,37 @@ export function MissingClipsDialog({ missingClips, onCancel, onLocate, onLocateB
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const inputRefs = useRef<Map<string, HTMLInputElement | null>>(new Map());
   const bulkInputRef = useRef<HTMLInputElement | null>(null);
+  // Local display/relocate order — drag to prioritize which clips are matched first during bulk relocate.
+  const [orderedIds, setOrderedIds] = useState<string[]>([]);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+
+  useEffect(() => {
+    setOrderedIds((current) => {
+      const known = current.filter((id) => missingClips.some((clip) => clip.id === id));
+      const added = missingClips.filter((clip) => !known.includes(clip.id)).map((clip) => clip.id);
+      return [...known, ...added];
+    });
+  }, [missingClips]);
+
+  const orderedClips = useMemo(() => {
+    const byId = new Map(missingClips.map((clip) => [clip.id, clip]));
+    return orderedIds.map((id) => byId.get(id)).filter((clip): clip is SessionClip => Boolean(clip));
+  }, [missingClips, orderedIds]);
+
+  const handleReorder = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) {
+      return;
+    }
+    setOrderedIds((current) => {
+      const oldIndex = current.indexOf(String(active.id));
+      const newIndex = current.indexOf(String(over.id));
+      if (oldIndex === -1 || newIndex === -1) {
+        return current;
+      }
+      return arrayMove(current, oldIndex, newIndex);
+    });
+  };
 
   const commonDirectory = useMemo(() => {
     if (missingClips.length === 0) {
@@ -63,7 +97,11 @@ export function MissingClipsDialog({ missingClips, onCancel, onLocate, onLocateB
     const files = event.target.files ? Array.from(event.target.files) : [];
     event.target.value = "";
     if (files.length > 0) {
-      onLocateBulk(files);
+      // Match files against clips in the user's preferred (reordered) sequence.
+      const rank = new Map(orderedIds.map((id, index) => [id, index]));
+      const nameRank = new Map(orderedClips.map((clip) => [clip.name, rank.get(clip.id) ?? 0]));
+      const sorted = [...files].sort((a, b) => (nameRank.get(a.name) ?? 999) - (nameRank.get(b.name) ?? 999));
+      onLocateBulk(sorted);
     }
   };
 
@@ -122,31 +160,25 @@ export function MissingClipsDialog({ missingClips, onCancel, onLocate, onLocateB
           />
         </div>
 
-        <ul className="missing-list">
-          {missingClips.map((clip) => (
-            <li key={clip.id} className="missing-row">
-              <FileVideo aria-hidden="true" size={18} />
-              <div className="missing-row-info">
-                <strong>{clip.name}</strong>
-                <span className="missing-row-path" title={clip.path}>
-                  {clip.path}
-                </span>
-              </div>
-              <button type="button" className="secondary-button" onClick={() => handleLocate(clip)}>
-                Locate…
-              </button>
-              <input
-                ref={(node) => {
-                  inputRefs.current.set(clip.id, node);
-                }}
-                type="file"
-                accept="video/mp4,.mp4"
-                hidden
-                onChange={(event) => handleFilePicked(clip, event)}
-              />
-            </li>
-          ))}
-        </ul>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleReorder}>
+          <SortableContext items={orderedIds} strategy={verticalListSortingStrategy}>
+            <ul className="missing-list">
+              {orderedClips.map((clip) => (
+                <SortableMissingRow key={clip.id} clip={clip} onLocate={handleLocate}>
+                  <input
+                    ref={(node) => {
+                      inputRefs.current.set(clip.id, node);
+                    }}
+                    type="file"
+                    accept="video/mp4,.mp4"
+                    hidden
+                    onChange={(event) => handleFilePicked(clip, event)}
+                  />
+                </SortableMissingRow>
+              ))}
+            </ul>
+          </SortableContext>
+        </DndContext>
 
         <div className="trim-footer">
           <button type="button" className="secondary-button" onClick={onCancel}>
@@ -155,5 +187,47 @@ export function MissingClipsDialog({ missingClips, onCancel, onLocate, onLocateB
         </div>
       </div>
     </div>
+  );
+}
+
+function SortableMissingRow({
+  clip,
+  onLocate,
+  children
+}: {
+  clip: SessionClip;
+  onLocate: (clip: SessionClip) => void;
+  children?: ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: clip.id });
+
+  return (
+    <li
+      ref={setNodeRef}
+      className={`missing-row ${isDragging ? "is-dragging" : ""}`}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <button
+        type="button"
+        className="drag-handle"
+        title="Reorder"
+        aria-label={`Reorder ${clip.name}`}
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical aria-hidden="true" size={16} />
+      </button>
+      <FileVideo aria-hidden="true" size={18} />
+      <div className="missing-row-info">
+        <strong>{clip.name}</strong>
+        <span className="missing-row-path" title={clip.path}>
+          {clip.path}
+        </span>
+      </div>
+      <button type="button" className="secondary-button" onClick={() => onLocate(clip)}>
+        Locate…
+      </button>
+      {children}
+    </li>
   );
 }

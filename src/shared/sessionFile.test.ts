@@ -47,7 +47,7 @@ describe("sessionFile", () => {
       makeItem({ name: "intro.mp4", rotation: 0 }),
       makeItem({ name: "outro.mp4", rotation: 1, trimSegments: [{ start: 0, end: 1.2345678 }, { start: 2, end: 4.5 }] })
     ];
-    const settings = { width: 1920, height: 1080, aspectLabel: "16:9 1080p", aspectHandling: "fit-blur" as const, format: "mp4" as const };
+    const settings = { width: 1920, height: 1080, aspectLabel: "16:9 1080p", aspectHandling: "fit-blur" as const, format: "mp4" as const, fps: 30, quality: 60, masterVolume: 1, outputName: "merged-video" };
     const session = serializeSession(items, settings, "auto");
 
     expect(session.version).toBe(1);
@@ -89,7 +89,7 @@ describe("sessionFile", () => {
     const items: VideoItem[] = [
       makeItem({ name: "a.mp4", rotation: 2, trimSegments: [{ start: 0.1, end: 0.2 }] })
     ];
-    const settings = { width: 1280, height: 720, aspectLabel: "16:9 720p", aspectHandling: "center-crop" as const, format: "mp4" as const };
+    const settings = { width: 1280, height: 720, aspectLabel: "16:9 720p", aspectHandling: "center-crop" as const, format: "mp4" as const, fps: 30, quality: 60, masterVolume: 1, outputName: "merged-video" };
     const first = serializeSession(items, settings, "backend");
     const second = serializeSession(parseSession(JSON.stringify(first)).clips.map((clip) => makeItem({
       name: clip.name,

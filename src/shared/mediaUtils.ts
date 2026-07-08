@@ -15,8 +15,36 @@ export const defaultOutputSettings: OutputSettings = {
   height: 1080,
   aspectLabel: "16:9 1080p",
   aspectHandling: "fit-blur",
-  format: "mp4"
+  format: "mp4",
+  fps: 30,
+  quality: 60,
+  masterVolume: 1,
+  outputName: "merged-video"
 };
+
+/** Fill in defaults for settings loaded from older sessions/autosaves that predate the new fields. */
+export function normalizeOutputSettings(settings: Partial<OutputSettings> | undefined): OutputSettings {
+  const base = settings ?? {};
+  const fps = Number(base.fps);
+  const quality = Number(base.quality);
+  const masterVolume = Number(base.masterVolume);
+  return {
+    ...defaultOutputSettings,
+    ...base,
+    fps: [24, 25, 30, 60].includes(fps) ? fps : defaultOutputSettings.fps,
+    quality: Number.isFinite(quality) ? Math.min(100, Math.max(20, quality)) : defaultOutputSettings.quality,
+    masterVolume: Number.isFinite(masterVolume) ? Math.min(2, Math.max(0, masterVolume)) : defaultOutputSettings.masterVolume,
+    outputName:
+      typeof base.outputName === "string" && base.outputName.trim().length > 0
+        ? sanitizeOutputName(base.outputName)
+        : defaultOutputSettings.outputName
+  };
+}
+
+export function sanitizeOutputName(name: string): string {
+  const cleaned = name.trim().replace(/[\\/:*?"<>|]/g, "-").replace(/\.+$/, "");
+  return cleaned.length > 0 ? cleaned.slice(0, 120) : "merged-video";
+}
 
 export function createVideoId(file: File): string {
   const randomPart = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
@@ -134,7 +162,9 @@ export function cloneVideoItem(item: VideoItem): VideoItem {
     id: createVideoId(item.file),
     objectUrl: URL.createObjectURL(item.file),
     previewUrl: item.previewUrl,
-    colorAdjust: { ...item.colorAdjust }
+    colorAdjust: { ...item.colorAdjust },
+    ...(item.textOverlay ? { textOverlay: { ...item.textOverlay } } : {}),
+    locked: false
   };
 }
 
@@ -160,6 +190,112 @@ export function clampColorAdjust(adjust: Partial<ColorAdjust>): ColorAdjust {
 
 export function hasColorAdjust(adjust: ColorAdjust): boolean {
   return adjust.brightness !== 0 || adjust.contrast !== 1 || adjust.saturation !== 1;
+}
+
+export function clampFreeze(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(30, Math.max(0, value));
+}
+
+export function clampCrossfade(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(5, Math.max(0, value));
+}
+
+/** Output duration of one clip after trim, speed and freeze-frame are applied. */
+export function clipOutputDuration(item: {
+  metadata?: { duration: number };
+  trimSegments?: { start: number; end: number }[];
+  speed: number;
+  freezeFrame?: number;
+}): number {
+  const kept = item.trimSegments && item.trimSegments.length > 0
+    ? item.trimSegments.reduce((sum, s) => sum + Math.max(0, s.end - s.start), 0)
+    : Math.max(0, item.metadata?.duration ?? 0);
+  const speed = item.speed > 0 ? item.speed : 1;
+  return kept / speed + Math.max(0, item.freezeFrame ?? 0);
+}
+
+/** Total composition duration accounting for crossfade overlaps between adjacent clips. */
+export function totalCompositionDuration(
+  items: Array<Parameters<typeof clipOutputDuration>[0] & { crossfadeAfter?: number }>
+): number {
+  let total = 0;
+  items.forEach((item, index) => {
+    total += clipOutputDuration(item);
+    if (index < items.length - 1) {
+      total -= Math.max(0, Math.min(item.crossfadeAfter ?? 0, 5));
+    }
+  });
+  return Math.max(0, total);
+}
+
+/** Rough output size estimate in bytes: (video bitrate + audio bitrate) * duration. */
+export function estimateOutputBytes(durationSeconds: number, videoBitrateKbps: number, audioBitrateKbps = 160): number {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    return 0;
+  }
+  return Math.round(((videoBitrateKbps + audioBitrateKbps) * 1000) / 8 * durationSeconds);
+}
+
+export function buildClipsCsv(items: VideoItem[]): string {
+  const header = "index,name,duration_seconds,effective_seconds,width,height,has_audio,size_bytes,speed,rotation_degrees";
+  const escapeCsv = (value: string) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value);
+  const rows = items.map((item, index) => {
+    const duration = item.metadata?.duration ?? 0;
+    return [
+      index + 1,
+      escapeCsv(item.name),
+      duration.toFixed(3),
+      clipOutputDuration(item).toFixed(3),
+      item.metadata?.width ?? 0,
+      item.metadata?.height ?? 0,
+      item.metadata?.hasAudio ? "yes" : "no",
+      item.size,
+      item.speed,
+      rotationDegrees(item.rotation)
+    ].join(",");
+  });
+  return [header, ...rows].join("\n");
+}
+
+export function buildProjectSummary(items: VideoItem[], settings: OutputSettings): string {
+  const lines = [
+    `Video Merger project — ${items.length} clip${items.length === 1 ? "" : "s"}`,
+    `Output: ${settings.width}x${settings.height} @ ${settings.fps}fps (${settings.aspectLabel}, ${settings.aspectHandling})`,
+    `Total duration: ${formatDuration(totalCompositionDuration(items))}`,
+    ""
+  ];
+  items.forEach((item, index) => {
+    const extras: string[] = [];
+    if (item.rotation !== 0) extras.push(`${rotationDegrees(item.rotation)}°`);
+    if (item.trimSegments && item.trimSegments.length > 0) extras.push("trimmed");
+    if (item.speed !== 1) extras.push(`${item.speed}x`);
+    if (item.muted) extras.push("muted");
+    if (item.reversed) extras.push("reversed");
+    if (item.markerLabel) lines.push(`--- ${item.markerLabel} ---`);
+    lines.push(
+      `${String(index + 1).padStart(2, "0")}. ${item.name} (${formatDuration(clipOutputDuration(item))})${extras.length > 0 ? ` [${extras.join(", ")}]` : ""}`
+    );
+  });
+  return lines.join("\n");
+}
+
+export function findDuplicateNames(existing: VideoItem[], incoming: File[]): string[] {
+  const seen = new Set(existing.map((item) => `${item.name}::${item.size}`));
+  const duplicates: string[] = [];
+  for (const file of incoming) {
+    const key = `${file.name}::${file.size}`;
+    if (seen.has(key)) {
+      duplicates.push(file.name);
+    }
+    seen.add(key);
+  }
+  return duplicates;
 }
 
 export function cycleClipRotation(rotation: ClipRotation): ClipRotation {
