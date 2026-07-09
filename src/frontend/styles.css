@@ -89,10 +89,10 @@ a {
 }
 
 .topbar {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(520px, auto);
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 18px;
+  gap: 14px 18px;
   margin: 0 auto 16px;
   max-width: 1440px;
   padding: 16px 18px;
@@ -105,9 +105,10 @@ a {
 
 .brand-lockup {
   display: flex;
+  flex: 1 1 220px;
   align-items: center;
   gap: 12px;
-  min-width: 0;
+  min-width: 220px;
 }
 
 .brand-mark {
@@ -142,18 +143,21 @@ p {
 
 .topbar-tools {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
   padding-left: 10px;
+  border-left: 1px solid var(--line);
 }
 
 .output-controls {
   display: flex;
+  flex: 1 1 520px;
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: end;
   gap: 10px;
+  min-width: 0;
 }
 
 .output-controls label {
@@ -655,7 +659,6 @@ p {
 }
 
 @media (max-width: 1050px) {
-  .topbar,
   .workspace {
     grid-template-columns: 1fr;
   }

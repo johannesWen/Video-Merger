@@ -1523,46 +1523,47 @@ export function App() {
                 : `${items.length} clips / ${readyCount} ready / ${formatDuration(totalDuration)} total`}
             </p>
           </div>
-          <div className="topbar-tools">
-            <button
-              type="button"
-              className="icon-button"
-              onClick={handleUndo}
-              disabled={past.length === 0}
-              title="Undo"
-              aria-label="Undo"
-            >
-              <Undo2 aria-hidden="true" size={17} />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={handleRedo}
-              disabled={future.length === 0}
-              title="Redo"
-              aria-label="Redo"
-            >
-              <Redo2 aria-hidden="true" size={17} />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => setShowShortcuts(true)}
-              title="Keyboard shortcuts"
-              aria-label="Keyboard shortcuts"
-            >
-              <Keyboard aria-hidden="true" size={17} />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={cycleTheme}
-              title={`Theme: ${theme} (click to cycle light / dark / high contrast)`}
-              aria-label="Cycle color theme"
-            >
-              {theme === "dark" ? <Sun aria-hidden="true" size={17} /> : <Moon aria-hidden="true" size={17} />}
-            </button>
-          </div>
+        </div>
+
+        <div className="topbar-tools">
+          <button
+            type="button"
+            className="icon-button"
+            onClick={handleUndo}
+            disabled={past.length === 0}
+            title="Undo"
+            aria-label="Undo"
+          >
+            <Undo2 aria-hidden="true" size={17} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={handleRedo}
+            disabled={future.length === 0}
+            title="Redo"
+            aria-label="Redo"
+          >
+            <Redo2 aria-hidden="true" size={17} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setShowShortcuts(true)}
+            title="Keyboard shortcuts"
+            aria-label="Keyboard shortcuts"
+          >
+            <Keyboard aria-hidden="true" size={17} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={cycleTheme}
+            title={`Theme: ${theme} (click to cycle light / dark / high contrast)`}
+            aria-label="Cycle color theme"
+          >
+            {theme === "dark" ? <Sun aria-hidden="true" size={17} /> : <Moon aria-hidden="true" size={17} />}
+          </button>
         </div>
 
         <OutputControls
