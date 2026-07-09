@@ -221,7 +221,9 @@ export function ClipPreviewModal({ item, onClose, onCommitSegments, onSplit, onR
       return;
     }
     if (video.paused || video.ended) {
-      void video.play();
+      video.play().catch(() => {
+        // A near-simultaneous pause() rejects the play() promise; ignore.
+      });
     } else {
       video.pause();
     }

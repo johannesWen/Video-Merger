@@ -2477,7 +2477,9 @@ function SortableClipCard({
       return;
     }
     video.currentTime = Math.min(video.currentTime, 0.2);
-    void video.play();
+    video.play().catch(() => {
+      // A near-simultaneous pause() (e.g. quick mouse in/out) rejects the play() promise; ignore.
+    });
   };
 
   const pausePreview = () => {
