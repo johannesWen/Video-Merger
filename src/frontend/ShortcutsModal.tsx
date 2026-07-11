@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 
 interface ShortcutsModalProps {
   onClose: () => void;
@@ -16,9 +17,40 @@ const SHORTCUTS: Array<[string, string]> = [
 ];
 
 export function ShortcutsModal({ onClose }: ShortcutsModalProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const frame = window.requestAnimationFrame(() => {
+      dialogRef.current?.focus();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      onClose();
+    }
+  };
+
   return (
     <div className="preview-modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="preview-modal shortcuts-modal" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+      <div
+        ref={dialogRef}
+        className="preview-modal shortcuts-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="shortcuts-title"
+        tabIndex={-1}
+        onKeyDown={handleKeyDown}
+      >
         <button type="button" className="preview-modal-close icon-button" onClick={onClose} aria-label="Close shortcuts">
           <X aria-hidden="true" size={18} />
         </button>

@@ -9,6 +9,7 @@ import type {
   VideoItem,
   VideoMetadata
 } from "../shared/types";
+import { renderTextOverlayPng } from "../frontend/canvasUtils";
 
 export interface BackendHealth {
   ok: boolean;
@@ -69,7 +70,6 @@ export class BackendFfmpegEngine implements Pick<ProcessingEngine, "merge" | "ca
     const overlayIndexes: number[] = [];
     for (const [index, item] of items.entries()) {
       if (item.textOverlay && item.textOverlay.text.trim().length > 0) {
-        const { renderTextOverlayPng } = await import("../frontend/canvasUtils");
         const png = await renderTextOverlayPng(item.textOverlay, settings.width, settings.height);
         formData.append("overlays", png, `overlay-${index}.png`);
         overlayIndexes.push(index);
